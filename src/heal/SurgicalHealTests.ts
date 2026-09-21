@@ -11,6 +11,7 @@ import {
 } from './framework/RepairRegistry';
 import type { HealthIssue } from '../types';
 import { createAssetDoctorTestPatient } from '../loaders/SampleModels';
+import { measureGeometryNormals } from '../analysis/NormalsMeasure';
 
 export interface SurgicalHealTestResult {
   name: string;
@@ -114,6 +115,65 @@ function makeUnreferencedFixture() {
   mesh.name = 'UnreferencedFixture';
   root.add(mesh);
 
+  return { root, mesh };
+}
+
+function makeNormalsFixture(missing = false) {
+  const root = new THREE.Group();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ], 3));
+  geometry.setIndex([0, 1, 2]);
+
+  if (!missing) {
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute([
+      0, 0, 0,
+      0, 0, 0,
+      0, 0, 0,
+    ], 3));
+  }
+
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  mesh.name = missing ? 'MissingNormalsFixture' : 'ZeroNormalsFixture';
+  root.add(mesh);
+  return { root, mesh };
+}
+
+function makeExactDuplicateFixture() {
+  const root = new THREE.Group();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    -1, 0, 0,
+     0, 0, 0,
+     0, 1, 0,
+     0, 0, 0,
+     1, 1, 0,
+     0, 1, 0,
+  ], 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute([
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+  ], 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute([
+    0, 0,
+    0.5, 0,
+    0.5, 1,
+    0.5, 0,
+    1, 1,
+    0.5, 1,
+  ], 2));
+  geometry.setIndex([0, 1, 2, 3, 4, 5]);
+
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  mesh.name = 'ExactDuplicateFixture';
+  root.add(mesh);
   return { root, mesh };
 }
 
@@ -410,7 +470,7 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
     } as HealthIssue;
 
     return getRepairOperationForIssue(issue) === null &&
-      listRepairOperations().length === 2;
+      listRepairOperations().length === 4;
   });
 
   test('Remove Unreferenced Vertices compacts every supported vertex-domain attribute and Undo restores the original geometry', () => {
@@ -545,6 +605,161 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
     }
   });
 
+  test('Recalculate Normals repairs zero normals, verifies topology preservation, and Undo restores the original stream', () => {
+    const { root, mesh } = makeNormalsFixture(false);
+    const engine = new SurgicalHealEngine();
+    const originalGeometry = mesh.geometry;
+    try {
+      const preview = engine.previewRecalculateNormals(root, mesh.uuid, 'normals-zero');
+      const applied = engine.applyPending(root, 'NormalsFixture.glb');
+      const id = engine.getLastOperation()!.operationId;
+      engine.completeVerification(id, true);
+      const report = engine.getLastOperation()!;
+      const repairedMeasurement = measureGeometryNormals(mesh.geometry);
+
+      const repaired =
+        preview.status === 'READY' &&
+        preview.operation === 'recalculate-normals' &&
+        preview.metric === 'normals' &&
+        preview.metricBefore === 3 &&
+        preview.metricAfter === 0 &&
+        applied.success &&
+        report.status === 'VERIFIED' &&
+        report.before.invalidNormals === 3 &&
+        report.after?.invalidNormals === 0 &&
+        report.before.triangleCount === report.after?.triangleCount &&
+        repairedMeasurement.invalidCount === 0;
+
+      const undo = engine.undoLast(root);
+      const restoredMeasurement = measureGeometryNormals(mesh.geometry);
+      return repaired &&
+        undo.success &&
+        mesh.geometry === originalGeometry &&
+        restoredMeasurement.invalidCount === 3;
+    } finally {
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+  });
+
+  test('Recalculate Normals supports missing normals and blocks stale tangent or morph-normal bases', () => {
+    const missing = makeNormalsFixture(true);
+    const tangent = makeNormalsFixture(false);
+    const morph = makeNormalsFixture(false);
+    const a = new SurgicalHealEngine();
+    const b = new SurgicalHealEngine();
+    const d = new SurgicalHealEngine();
+
+    try {
+      const missingPreview = a.previewRecalculateNormals(missing.root, missing.mesh.uuid, 'normals-missing');
+
+      tangent.mesh.geometry.setAttribute('tangent', new THREE.Float32BufferAttribute([
+        1, 0, 0, 1,
+        1, 0, 0, 1,
+        1, 0, 0, 1,
+      ], 4));
+      const tangentPreview = b.previewRecalculateNormals(tangent.root, tangent.mesh.uuid, 'normals-zero');
+
+      morph.mesh.geometry.morphAttributes.normal = [
+        new THREE.Float32BufferAttribute([
+          0, 0, 1,
+          0, 0, 1,
+          0, 0, 1,
+        ], 3),
+      ];
+      const morphPreview = d.previewRecalculateNormals(morph.root, morph.mesh.uuid, 'normals-zero');
+
+      return missingPreview.status === 'READY' &&
+        missingPreview.affectedCount === 3 &&
+        tangentPreview.status === 'BLOCKED' &&
+        tangentPreview.reasonKey === 'heal.errors.normalsTangentsUnsupported' &&
+        morphPreview.status === 'BLOCKED' &&
+        morphPreview.reasonKey === 'heal.errors.morphNormalsUnsupported';
+    } finally {
+      a.cancelPreview();
+      b.cancelPreview();
+      d.cancelPreview();
+      for (const fixture of [missing, tangent, morph]) {
+        fixture.mesh.geometry.dispose();
+        (fixture.mesh.material as THREE.Material).dispose();
+      }
+    }
+  });
+
+  test('Exact Duplicate Vertices welds only identical attribute tuples and verifies non-regression', () => {
+    const { root, mesh } = makeExactDuplicateFixture();
+    const engine = new SurgicalHealEngine();
+    const originalGeometry = mesh.geometry;
+
+    try {
+      const before = analyzeMeshTopology(meshTopologyData(mesh));
+      const preview = engine.previewMergeExactDuplicateVertices(root, mesh.uuid);
+      const applied = engine.applyPending(root, 'DuplicateFixture.glb');
+      const id = engine.getLastOperation()!.operationId;
+      engine.completeVerification(id, true);
+      const report = engine.getLastOperation()!;
+      const after = analyzeMeshTopology(meshTopologyData(mesh));
+
+      const welded =
+        preview.status === 'READY' &&
+        preview.operation === 'merge-exact-duplicate-vertices' &&
+        preview.affectedCount === 2 &&
+        preview.verticesBefore === 6 &&
+        preview.verticesAfter === 4 &&
+        applied.success &&
+        report.status === 'VERIFIED' &&
+        before.triangleCount === after.triangleCount &&
+        after.vertexCount === 4 &&
+        after.boundaryEdges < before.boundaryEdges &&
+        after.componentsCount <= before.componentsCount &&
+        after.nonManifoldEdges <= before.nonManifoldEdges;
+
+      const undo = engine.undoLast(root);
+      return welded &&
+        undo.success &&
+        mesh.geometry === originalGeometry &&
+        mesh.geometry.getAttribute('position').count === 6;
+    } finally {
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+  });
+
+  test('Exact Duplicate Vertices refuses attribute seams and unresolved unreferenced vertices', () => {
+    const seam = makeExactDuplicateFixture();
+    const loose = makeExactDuplicateFixture();
+    const a = new SurgicalHealEngine();
+    const b = new SurgicalHealEngine();
+
+    try {
+      // Break UV equality for one duplicate pair. One exact pair may remain, but
+      // the resulting topology change must still satisfy all safety gates.
+      seam.mesh.geometry.getAttribute('uv').setX(3, 0.55);
+      seam.mesh.geometry.getAttribute('uv').needsUpdate = true;
+      const seamPreview = a.previewMergeExactDuplicateVertices(seam.root, seam.mesh.uuid);
+
+      // Add an unreferenced vertex so cleanup order is explicit.
+      const oldPosition = loose.mesh.geometry.getAttribute('position');
+      const expanded = new Float32Array((oldPosition.count + 1) * 3);
+      expanded.set(oldPosition.array as ArrayLike<number>);
+      expanded.set([9, 9, 9], oldPosition.count * 3);
+      loose.mesh.geometry.setAttribute('position', new THREE.BufferAttribute(expanded, 3));
+      // Other attributes now intentionally mismatch count; isolated cleanup should
+      // be requested before duplicate merge can even consider attribute remap.
+      const loosePreview = b.previewMergeExactDuplicateVertices(loose.root, loose.mesh.uuid);
+
+      return seamPreview.status === 'BLOCKED' &&
+        loosePreview.status === 'BLOCKED';
+    } finally {
+      a.cancelPreview();
+      b.cancelPreview();
+      for (const fixture of [seam, loose]) {
+        fixture.mesh.geometry.dispose();
+        (fixture.mesh.material as THREE.Material).dispose();
+      }
+    }
+  });
+
   test('Asset Doctor Test Patient exposes deterministic repairable and manual-review findings', () => {
     const sample = createAssetDoctorTestPatient();
     const meshes: THREE.Mesh[] = [];
@@ -555,13 +770,16 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
     try {
       const repairTarget = meshes.find((mesh) => mesh.name === 'Repair_Target_Degenerate_And_Loose_Vertices');
       const nonManifold = meshes.find((mesh) => mesh.name === 'Manual_Control_NonManifold_Edge');
-      const zeroNormals = meshes.find((mesh) => mesh.name === 'Manual_Control_Zero_Normals');
+      const zeroNormals = meshes.find((mesh) => mesh.name === 'Repair_Target_Zero_Normals');
+      const missingNormals = meshes.find((mesh) => mesh.name === 'Repair_Target_Missing_Normals');
+      const exactDuplicates = meshes.find((mesh) => mesh.name === 'Repair_Target_Exact_Duplicate_Vertices');
       const rig = meshes.find((mesh) => mesh.name === 'Rig_Control_SkinnedMesh') as THREE.SkinnedMesh | undefined;
 
-      if (!repairTarget || !nonManifold || !zeroNormals || !rig) return false;
+      if (!repairTarget || !nonManifold || !zeroNormals || !missingNormals || !exactDuplicates || !rig) return false;
 
       const repairStats = analyzeMeshTopology(meshTopologyData(repairTarget));
       const nonManifoldStats = analyzeMeshTopology(meshTopologyData(nonManifold));
+      const duplicateStats = analyzeMeshTopology(meshTopologyData(exactDuplicates));
       const normals = zeroNormals.geometry.getAttribute('normal');
       let allNormalsZero = true;
       for (let i = 0; i < normals.count; i++) {
@@ -572,12 +790,14 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
       }
 
       return sample.id === 'test-patient' &&
-        meshes.length === 4 &&
+        meshes.length === 6 &&
         repairStats.degenerateTriangles === 1 &&
         repairStats.isolatedVertices === 2 &&
         repairStats.thinTriangles >= 1 &&
         nonManifoldStats.nonManifoldEdges === 1 &&
         allNormalsZero &&
+        !missingNormals.geometry.getAttribute('normal') &&
+        duplicateStats.potentialDuplicatePositions >= 2 &&
         rig.isSkinnedMesh === true &&
         rig.skeleton.bones.some((bone) => bone.name === 'UnusedLocator') &&
         sample.animations.length === 1 &&
