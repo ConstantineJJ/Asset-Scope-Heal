@@ -63,6 +63,7 @@ function denseCloneAttribute(attribute: Attribute): THREE.BufferAttribute {
 
 function validVertexAttribute(attribute: Attribute, vertexCount: number): boolean {
   if ((attribute as THREE.InstancedBufferAttribute).isInstancedBufferAttribute) return false;
+  if ((attribute as Attribute & { isFloat16BufferAttribute?: boolean }).isFloat16BufferAttribute) return false;
   if (!Number.isInteger(attribute.itemSize) || attribute.itemSize <= 0) return false;
   if (attribute.count !== vertexCount) return false;
   return true;
@@ -173,12 +174,26 @@ export function planRemoveUnreferencedVertices(
     if (!validVertexAttribute(attribute, vertexCount)) {
       return { reasonKey: 'heal.errors.vertexAttributeUnsupported' };
     }
+    for (let vertex = 0; vertex < attribute.count; vertex++) {
+      for (let component = 0; component < attribute.itemSize; component++) {
+        if (!Number.isFinite(componentAt(attribute, vertex, component))) {
+          return { reasonKey: 'heal.errors.invalidGeometry' };
+        }
+      }
+    }
   }
 
   for (const attributes of Object.values(geometry.morphAttributes)) {
     for (const attribute of attributes) {
       if (!validVertexAttribute(attribute, vertexCount)) {
         return { reasonKey: 'heal.errors.vertexAttributeUnsupported' };
+      }
+      for (let vertex = 0; vertex < attribute.count; vertex++) {
+        for (let component = 0; component < attribute.itemSize; component++) {
+          if (!Number.isFinite(componentAt(attribute, vertex, component))) {
+            return { reasonKey: 'heal.errors.invalidGeometry' };
+          }
+        }
       }
     }
   }
@@ -219,7 +234,14 @@ export function planRemoveUnreferencedVertices(
   }
 
   replacement.morphTargetsRelative = geometry.morphTargetsRelative;
-  replacement.setIndex(new THREE.BufferAttribute(nextIndexArray, 1, index.normalized));
+  const nextIndex = new THREE.BufferAttribute(nextIndexArray, 1, index.normalized);
+  nextIndex.setUsage(index.usage);
+  const sourceIndexWithGpuType = index as THREE.BufferAttribute & { gpuType?: number };
+  const nextIndexWithGpuType = nextIndex as THREE.BufferAttribute & { gpuType?: number };
+  if (sourceIndexWithGpuType.gpuType !== undefined) {
+    nextIndexWithGpuType.gpuType = sourceIndexWithGpuType.gpuType;
+  }
+  replacement.setIndex(nextIndex);
   copyGroupsAndRange(geometry, replacement);
   replacement.computeBoundingBox();
   replacement.computeBoundingSphere();
