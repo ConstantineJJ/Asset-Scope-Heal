@@ -110,7 +110,49 @@ export function createAssetDoctorTestPatient(): SampleAsset {
   repairableGroup.add(repairMesh);
 
   // ---------------------------------------------------------------------------
-  // 2) Diagnostic-only non-manifold control
+  // 2) Exact duplicate weld target
+  // ---------------------------------------------------------------------------
+  // Two triangles form a visual quad, but the shared edge is duplicated in the
+  // vertex domain. The duplicate pairs have exactly matching position, normal
+  // and UV attributes. Welding them reduces vertices and boundary edges without
+  // introducing a topology regression.
+  const duplicateGeometry = new THREE.BufferGeometry();
+  duplicateGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    // Triangle A: A, B, C
+    -0.70, 0.10, 0.00,
+     0.00, 0.10, 0.00,
+     0.00, 0.80, 0.00,
+
+    // Triangle B: duplicate B, D, duplicate C
+     0.00, 0.10, 0.00,
+     0.70, 0.80, 0.00,
+     0.00, 0.80, 0.00,
+  ], 3));
+  duplicateGeometry.setAttribute('normal', new THREE.Float32BufferAttribute([
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+  ], 3));
+  duplicateGeometry.setAttribute('uv', new THREE.Float32BufferAttribute([
+    0, 0,
+    0.5, 0,
+    0.5, 1,
+    0.5, 0,
+    1, 1,
+    0.5, 1,
+  ], 2));
+  duplicateGeometry.setIndex([0, 1, 2, 3, 4, 5]);
+
+  const duplicateMesh = new THREE.Mesh(duplicateGeometry, repairMat);
+  duplicateMesh.name = 'Repair_Target_Exact_Duplicate_Vertices';
+  duplicateMesh.position.set(-0.15, 0, 1.75);
+  repairableGroup.add(duplicateMesh);
+
+  // ---------------------------------------------------------------------------
+  // 3) Diagnostic-only non-manifold control
   // ---------------------------------------------------------------------------
   // Three triangles deliberately share the same edge (0, 1).
   // This finding should remain diagnostic-only until a dedicated repair strategy
@@ -136,7 +178,7 @@ export function createAssetDoctorTestPatient(): SampleAsset {
   manualGroup.add(nonManifoldMesh);
 
   // ---------------------------------------------------------------------------
-  // 3) Diagnostic-only zero-normal control
+  // 4) Repairable zero-normal control
   // ---------------------------------------------------------------------------
   // Valid indexed triangle, but its normal stream is intentionally zeroed.
   const zeroNormalGeometry = new THREE.BufferGeometry();
@@ -152,13 +194,32 @@ export function createAssetDoctorTestPatient(): SampleAsset {
   ], 3));
   zeroNormalGeometry.setIndex([0, 1, 2]);
 
-  const zeroNormalMesh = new THREE.Mesh(zeroNormalGeometry, warningMat);
-  zeroNormalMesh.name = 'Manual_Control_Zero_Normals';
+  const zeroNormalMesh = new THREE.Mesh(zeroNormalGeometry, repairMat);
+  zeroNormalMesh.name = 'Repair_Target_Zero_Normals';
   zeroNormalMesh.position.set(1.2, 0, 1.25);
-  manualGroup.add(zeroNormalMesh);
+  repairableGroup.add(zeroNormalMesh);
+
+  // Missing-normal control: valid topology with no normal attribute at all.
+  const missingNormalGeometry = new THREE.BufferGeometry();
+  missingNormalGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    -0.45, 0.10, 0.0,
+     0.45, 0.10, 0.0,
+     0.00, 0.75, 0.0,
+  ], 3));
+  missingNormalGeometry.setAttribute('uv', new THREE.Float32BufferAttribute([
+    0, 0,
+    1, 0,
+    0.5, 1,
+  ], 2));
+  missingNormalGeometry.setIndex([0, 1, 2]);
+
+  const missingNormalMesh = new THREE.Mesh(missingNormalGeometry, repairMat);
+  missingNormalMesh.name = 'Repair_Target_Missing_Normals';
+  missingNormalMesh.position.set(2.15, 0, 1.25);
+  repairableGroup.add(missingNormalMesh);
 
   // ---------------------------------------------------------------------------
-  // 4) Small rig + animation control
+  // 5) Small rig + animation control
   // ---------------------------------------------------------------------------
   // Clean geometry with a tiny skeleton. One extra locator bone is deliberately
   // unused by skin weights, so rig diagnostics still have useful evidence.
