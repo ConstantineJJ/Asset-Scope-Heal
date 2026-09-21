@@ -6,8 +6,10 @@ import { captureAttribute, captureGeometry, geometryMatches, type GeometrySnapsh
 import { healMetrics, verifyHealOperation } from './HealVerification';
 import {
   geometryDataEquivalent,
+  planMergeExactDuplicateVertices,
   planRemoveUnreferencedVertices,
 } from './GeometryRemap';
+import { planRecalculateNormals } from './NormalsRepair';
 
 type SupportedIndexArray = Uint8Array | Uint16Array | Uint32Array;
 
@@ -380,6 +382,222 @@ export class SurgicalHealEngine {
     return preview;
   }
 
+  public previewRecalculateNormals(
+    root: THREE.Object3D,
+    meshUuid: string,
+    issueId: 'normals-missing' | 'normals-zero'
+  ): HealPreview {
+    this.disposePending();
+
+    const obj = root.getObjectByProperty('uuid', meshUuid);
+    if (!obj || !(obj as THREE.Mesh).isMesh || (obj as THREE.InstancedMesh).isInstancedMesh) {
+      return this.blockedNormals(meshUuid, 'Unknown mesh', issueId, 'heal.errors.targetMissing');
+    }
+
+    const mesh = obj as THREE.Mesh;
+    const geometry = mesh.geometry;
+
+    let sharedUsers = 0;
+    root.traverse((candidate) => {
+      if ((candidate as THREE.Mesh).isMesh && (candidate as THREE.Mesh).geometry === geometry) {
+        sharedUsers++;
+      }
+    });
+    if (sharedUsers !== 1) {
+      return this.blockedNormals(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        issueId,
+        'heal.errors.sharedGeometry'
+      );
+    }
+
+    const planned = planRecalculateNormals(geometry);
+    if ('reasonKey' in planned) {
+      return this.blockedNormals(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        issueId,
+        planned.reasonKey
+      );
+    }
+
+    let before;
+    try {
+      before = analyzeMeshTopology(meshTopologyData(mesh));
+    } catch {
+      planned.replacement.dispose();
+      return this.blockedNormals(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        issueId,
+        'heal.errors.beforeUnavailable'
+      );
+    }
+
+    const preview: HealPreview = {
+      operationId: THREE.MathUtils.generateUUID(),
+      operation: 'recalculate-normals',
+      issueId,
+      meshUuid: mesh.uuid,
+      meshName: mesh.name || `Mesh_${mesh.id}`,
+      status: 'READY',
+      risk: 'CONDITIONAL',
+      trianglesBefore: before.triangleCount,
+      trianglesAfter: before.triangleCount,
+      affectedTriangles: 0,
+      affectedCount: planned.invalidBefore,
+      metric: 'normals',
+      metricBefore: planned.invalidBefore,
+      metricAfter: planned.invalidAfter,
+      verticesBefore: before.vertexCount,
+      verticesAfter: before.vertexCount,
+      affectedVertices: planned.invalidBefore,
+      boundaryEdgesBefore: before.boundaryEdges,
+      boundaryEdgesAfter: before.boundaryEdges,
+      nonManifoldEdgesBefore: before.nonManifoldEdges,
+      nonManifoldEdgesAfter: before.nonManifoldEdges,
+    };
+
+    this.pending = {
+      mutation: 'geometry',
+      preview,
+      geometryUuid: geometry.uuid,
+      replacementGeometry: planned.replacement,
+      snapshot: captureGeometry(geometry),
+    };
+
+    return preview;
+  }
+
+  public previewMergeExactDuplicateVertices(
+    root: THREE.Object3D,
+    meshUuid: string
+  ): HealPreview {
+    this.disposePending();
+
+    const obj = root.getObjectByProperty('uuid', meshUuid);
+    if (!obj || !(obj as THREE.Mesh).isMesh || (obj as THREE.InstancedMesh).isInstancedMesh) {
+      return this.blockedDuplicates(meshUuid, 'Unknown mesh', 'heal.errors.targetMissing');
+    }
+
+    const mesh = obj as THREE.Mesh;
+    const geometry = mesh.geometry;
+
+    let sharedUsers = 0;
+    root.traverse((candidate) => {
+      if ((candidate as THREE.Mesh).isMesh && (candidate as THREE.Mesh).geometry === geometry) {
+        sharedUsers++;
+      }
+    });
+    if (sharedUsers !== 1) {
+      return this.blockedDuplicates(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        'heal.errors.sharedGeometry'
+      );
+    }
+
+    let before;
+    try {
+      before = analyzeMeshTopology(meshTopologyData(mesh));
+    } catch {
+      return this.blockedDuplicates(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        'heal.errors.beforeUnavailable'
+      );
+    }
+
+    if (before.isolatedVertices > 0) {
+      return this.blockedDuplicates(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        'heal.errors.cleanupUnreferencedFirst'
+      );
+    }
+
+    const planned = planMergeExactDuplicateVertices(geometry);
+    if ('reasonKey' in planned) {
+      return this.blockedDuplicates(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        planned.reasonKey
+      );
+    }
+
+    const probe = new THREE.Mesh(planned.replacement);
+    probe.name = mesh.name;
+    probe.uuid = mesh.uuid;
+    probe.matrixWorld.copy(mesh.matrixWorld);
+
+    let after;
+    try {
+      after = analyzeMeshTopology(meshTopologyData(probe));
+    } catch {
+      planned.replacement.dispose();
+      return this.blockedDuplicates(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        'heal.errors.afterUnavailable'
+      );
+    }
+
+    const protectedKeys = [
+      'triangleCount',
+      'degenerateTriangles',
+      'boundaryEdges',
+      'nonManifoldEdges',
+      'isolatedVertices',
+      'componentsCount',
+      'thinTriangles',
+      'tinyComponentsCount',
+    ] as const;
+
+    if (protectedKeys.some((key) => after[key] !== before[key])) {
+      planned.replacement.dispose();
+      return this.blockedDuplicates(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        'heal.errors.duplicateMergeChangesTopology'
+      );
+    }
+
+    const preview: HealPreview = {
+      operationId: THREE.MathUtils.generateUUID(),
+      operation: 'merge-exact-duplicate-vertices',
+      issueId: 'topo-duplicate-positions',
+      meshUuid: mesh.uuid,
+      meshName: mesh.name || `Mesh_${mesh.id}`,
+      status: 'READY',
+      risk: 'CONDITIONAL',
+      trianglesBefore: before.triangleCount,
+      trianglesAfter: after.triangleCount,
+      affectedTriangles: 0,
+      affectedCount: planned.removedVertices,
+      metric: 'duplicates',
+      metricBefore: before.potentialDuplicatePositions,
+      metricAfter: after.potentialDuplicatePositions,
+      verticesBefore: planned.verticesBefore,
+      verticesAfter: planned.verticesAfter,
+      affectedVertices: planned.removedVertices,
+      boundaryEdgesBefore: before.boundaryEdges,
+      boundaryEdgesAfter: after.boundaryEdges,
+      nonManifoldEdgesBefore: before.nonManifoldEdges,
+      nonManifoldEdgesAfter: after.nonManifoldEdges,
+    };
+
+    this.pending = {
+      mutation: 'geometry',
+      preview,
+      geometryUuid: geometry.uuid,
+      replacementGeometry: planned.replacement,
+      snapshot: captureGeometry(geometry),
+    };
+
+    return preview;
+  }
+
   public applyPending(root: THREE.Object3D, assetName = ''): HealApplyResult {
     const pending = this.pending;
     if (!pending) {
@@ -394,7 +612,10 @@ export class SurgicalHealEngine {
 
     const mesh = obj as THREE.Mesh;
     const geometry = mesh.geometry;
-    if (geometry.uuid !== pending.geometryUuid || !geometry.index) {
+    if (
+      geometry.uuid !== pending.geometryUuid ||
+      (pending.mutation === 'index-only' && !geometry.index)
+    ) {
       this.disposePending();
       return { success: false, reason: 'Geometry changed after preview. Preview must be regenerated.' };
     }
@@ -415,7 +636,7 @@ export class SurgicalHealEngine {
 
     let before;
     try {
-      before = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)));
+      before = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)), geometry);
     } catch {
       this.disposePending();
       return { success: false, reasonKey: 'heal.errors.beforeUnavailable' };
@@ -432,7 +653,7 @@ export class SurgicalHealEngine {
           captureAttribute(pending.replacementIndex),
         ],
       };
-      restore = { mutation: 'index-only', previousIndex: geometry.index.clone() };
+      restore = { mutation: 'index-only', previousIndex: geometry.index!.clone() };
       geometry.setIndex(pending.replacementIndex.clone());
       geometry.index!.needsUpdate = true;
       geometry.computeBoundingBox();
@@ -455,7 +676,7 @@ export class SurgicalHealEngine {
 
     let after = null;
     try {
-      after = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)));
+      after = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)), mesh.geometry);
     } catch {
       // An unavailable postcheck remains PARTIAL while Undo stays available.
     }
@@ -541,7 +762,9 @@ export class SurgicalHealEngine {
       return { success: false, reasonKey: 'heal.errors.staleUndo' };
     }
 
-    const trianglesBeforeUndo = Math.floor((mesh.geometry.index?.count ?? 0) / 3);
+    const trianglesBeforeUndo = mesh.geometry.index
+      ? Math.floor(mesh.geometry.index.count / 3)
+      : Math.floor((mesh.geometry.getAttribute('position')?.count ?? 0) / 3);
 
     if (undo.restore.mutation === 'index-only') {
       mesh.geometry.setIndex(undo.restore.previousIndex.clone());
@@ -569,7 +792,9 @@ export class SurgicalHealEngine {
       affectedVertices: undo.affectedVertices,
       affectedCount: undo.affectedCount,
       trianglesBefore: trianglesBeforeUndo,
-      trianglesAfter: Math.floor((mesh.geometry.index?.count ?? 0) / 3),
+      trianglesAfter: mesh.geometry.index
+        ? Math.floor(mesh.geometry.index.count / 3)
+        : Math.floor((mesh.geometry.getAttribute('position')?.count ?? 0) / 3),
     };
   }
 
@@ -621,6 +846,73 @@ export class SurgicalHealEngine {
       affectedTriangles: 0,
       affectedCount: 0,
       metric: 'vertices',
+      metricBefore: 0,
+      metricAfter: 0,
+      verticesBefore: 0,
+      verticesAfter: 0,
+      affectedVertices: 0,
+      boundaryEdgesBefore: 0,
+      boundaryEdgesAfter: 0,
+      nonManifoldEdgesBefore: 0,
+      nonManifoldEdgesAfter: 0,
+    };
+  }
+
+  private blockedNormals(
+    meshUuid: string,
+    meshName: string,
+    issueId: 'normals-missing' | 'normals-zero',
+    reasonKeyOrReason: string
+  ): HealPreview {
+    const isKey = reasonKeyOrReason.startsWith('heal.');
+    return {
+      operationId: `heal_blocked_normals_${meshUuid}`,
+      operation: 'recalculate-normals',
+      issueId,
+      meshUuid,
+      meshName,
+      status: 'BLOCKED',
+      risk: 'CONDITIONAL',
+      reasonKey: isKey ? reasonKeyOrReason : undefined,
+      reason: isKey ? undefined : reasonKeyOrReason,
+      trianglesBefore: 0,
+      trianglesAfter: 0,
+      affectedTriangles: 0,
+      affectedCount: 0,
+      metric: 'normals',
+      metricBefore: 0,
+      metricAfter: 0,
+      verticesBefore: 0,
+      verticesAfter: 0,
+      affectedVertices: 0,
+      boundaryEdgesBefore: 0,
+      boundaryEdgesAfter: 0,
+      nonManifoldEdgesBefore: 0,
+      nonManifoldEdgesAfter: 0,
+    };
+  }
+
+  private blockedDuplicates(
+    meshUuid: string,
+    meshName: string,
+    reasonKeyOrReason: string
+  ): HealPreview {
+    const isKey = reasonKeyOrReason.startsWith('heal.');
+    return {
+      operationId: `heal_blocked_duplicates_${meshUuid}`,
+      operation: 'merge-exact-duplicate-vertices',
+      issueId: 'topo-duplicate-positions',
+      meshUuid,
+      meshName,
+      status: 'BLOCKED',
+      risk: 'CONDITIONAL',
+      reasonKey: isKey ? reasonKeyOrReason : undefined,
+      reason: isKey ? undefined : reasonKeyOrReason,
+      trianglesBefore: 0,
+      trianglesAfter: 0,
+      affectedTriangles: 0,
+      affectedCount: 0,
+      metric: 'duplicates',
       metricBefore: 0,
       metricAfter: 0,
       verticesBefore: 0,
