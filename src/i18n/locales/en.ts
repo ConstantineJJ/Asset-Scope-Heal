@@ -34,6 +34,14 @@ export const en = {
     showTitle: 'Show part',
     topNodes: 'top nodes',
   },
+  repair: {
+    operations: {
+      removeDegenerateTriangles: {
+        label: 'Remove Degenerate Triangles',
+        description: 'Preview a guarded index-only repair for degenerate triangles.',
+      },
+    },
+  },
   heal: {
     report: {
       VERIFIED: 'The target repair passed the measured checks.',
