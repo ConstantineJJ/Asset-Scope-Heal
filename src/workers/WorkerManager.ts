@@ -28,6 +28,8 @@ export class WorkerManager {
       ? 1
       : overallBox.getSize(new THREE.Vector3()).length();
 
+    root.updateMatrixWorld(true);
+
     root.traverse((obj) => {
       if (obj.name?.startsWith('__ascope_internal_')) return;
       if ((obj as THREE.Mesh).isMesh) {
@@ -53,6 +55,7 @@ export class WorkerManager {
           positions: posArray,
           indices: indexArray,
           boundingBoxDiagonal: overallDiag,
+          worldMatrix: Array.from(mesh.matrixWorld.elements),
         });
       }
     });

@@ -178,6 +178,18 @@ export function runDiagnosticCoreTests(): DiagnosticCoreTestResult[] {
       denseTrianglesCount: 0,
       triangleCount: 12,
       vertexCount: 24,
+      localization: {
+        degenerate: {
+          focusPoint: [1, 2, 3],
+          affectedIndices: [0],
+          element: 'triangle',
+        },
+        nonManifold: {
+          focusPoint: [2, 3, 4],
+          affectedIndices: [4, 5],
+          element: 'edge',
+        },
+      },
     }];
     const findings = aggregateTopologyIssues(topology);
     const degenerate = findings.find((i) => i.id === 'topo-degenerate-triangles');
@@ -188,6 +200,51 @@ export function runDiagnosticCoreTests(): DiagnosticCoreTestResult[] {
       expected: 'Degenerate + non-manifold = WARNING',
       actual: `${degenerate?.severity ?? 'missing'} / ${nonManifold?.severity ?? 'missing'}`,
       passed: degenerate?.severity === 'WARNING' && nonManifold?.severity === 'WARNING',
+    });
+  }
+
+  {
+    const topology: TopologyStats[] = [{
+      meshUuid: 'localized-mesh',
+      meshName: 'Body',
+      degenerateTriangles: 1,
+      degenerateIndices: [7],
+      boundaryEdges: 0,
+      nonManifoldEdges: 0,
+      isolatedVertices: 0,
+      componentsCount: 1,
+      tinyComponentsCount: 0,
+      thinTriangles: 0,
+      potentialDuplicatePositions: 0,
+      minTriangleArea: 0,
+      maxTriangleArea: 1,
+      avgTriangleArea: 0.5,
+      denseTrianglesCount: 0,
+      triangleCount: 12,
+      vertexCount: 24,
+      localization: {
+        degenerate: {
+          focusPoint: [1, 2, 3],
+          affectedIndices: [7],
+          element: 'triangle',
+        },
+      },
+    }];
+    const finding = aggregateTopologyIssues(topology).find((i) => i.id === 'topo-degenerate-triangles');
+    results.push({
+      name: 'Issue Localization Contract Test',
+      description: 'A localizable topology finding must retain its mesh UUID, affected indices and world-space focus point.',
+      expected: 'Body / triangle 7 / focus [1,2,3]',
+      actual: finding
+        ? `${finding.meshName ?? 'none'} / ${finding.affectedIndices?.[0] ?? 'none'} / [${finding.focusPosition?.join(',') ?? 'none'}]`
+        : 'missing',
+      passed:
+        finding?.meshUuid === 'localized-mesh' &&
+        finding.meshName === 'Body' &&
+        finding.affectedIndices?.[0] === 7 &&
+        finding.focusPosition?.[0] === 1 &&
+        finding.focusPosition?.[1] === 2 &&
+        finding.focusPosition?.[2] === 3,
     });
   }
 

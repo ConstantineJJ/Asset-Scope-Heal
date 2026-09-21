@@ -16,39 +16,41 @@ import { getDiagnosticProfile } from './DiagnosticProfiles';
 export function aggregateTopologyIssues(topologyResults: TopologyStats[]): HealthIssue[] {
   const issues: HealthIssue[] = [];
 
-  let totalDegenerate = 0;
-  let totalBoundary = 0;
-  let totalNonManifold = 0;
-  let totalIsolated = 0;
-  let totalTinyComponents = 0;
-  let totalThinTriangles = 0;
-  let totalDuplicates = 0;
+  const total = (selector: (stat: TopologyStats) => number) =>
+    topologyResults.reduce((sum, stat) => sum + selector(stat), 0);
 
-  const affectedMeshNames: string[] = [];
-  const focusPoints: Array<[number, number, number]> = [];
+  const firstWith = (
+    selector: (stat: TopologyStats) => number,
+    localizationKey: keyof NonNullable<TopologyStats['localization']>
+  ) => {
+    const stat = topologyResults.find((entry) => selector(entry) > 0);
+    if (!stat) return undefined;
+    const sample = stat.localization?.[localizationKey];
+    return { stat, sample };
+  };
 
-  for (const stat of topologyResults) {
-    totalDegenerate += stat.degenerateTriangles;
-    totalBoundary += stat.boundaryEdges;
-    totalNonManifold += stat.nonManifoldEdges;
-    totalIsolated += stat.isolatedVertices;
-    totalTinyComponents += stat.tinyComponentsCount;
-    totalThinTriangles += stat.thinTriangles;
-    totalDuplicates += stat.potentialDuplicatePositions;
+  const localize = (
+    selector: (stat: TopologyStats) => number,
+    localizationKey: keyof NonNullable<TopologyStats['localization']>
+  ): Partial<HealthIssue> => {
+    const found = firstWith(selector, localizationKey);
+    if (!found) return {};
+    return {
+      meshUuid: found.stat.meshUuid,
+      meshName: found.stat.meshName,
+      affectedIndices: found.sample?.affectedIndices,
+      focusPosition: found.sample?.focusPoint,
+    };
+  };
 
-    if (
-      stat.degenerateTriangles > 0 ||
-      stat.nonManifoldEdges > 0 ||
-      stat.tinyComponentsCount > 0
-    ) {
-      affectedMeshNames.push(stat.meshName);
-      if (stat.sampleFocusPoints && stat.sampleFocusPoints.length > 0) {
-        focusPoints.push(...stat.sampleFocusPoints);
-      }
-    }
-  }
+  const totalDegenerate = total((s) => s.degenerateTriangles);
+  const totalBoundary = total((s) => s.boundaryEdges);
+  const totalNonManifold = total((s) => s.nonManifoldEdges);
+  const totalIsolated = total((s) => s.isolatedVertices);
+  const totalTinyComponents = total((s) => s.tinyComponentsCount);
+  const totalThinTriangles = total((s) => s.thinTriangles);
+  const totalDuplicates = total((s) => s.potentialDuplicatePositions);
 
-  // 1. Degenerate triangles
   if (totalDegenerate > 0) {
     issues.push({
       id: 'topo-degenerate-triangles',
@@ -56,10 +58,10 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       severity: 'WARNING',
       layer: 'Health',
       title: `Degenerate triangles: ${totalDegenerate}`,
-      description: `${totalDegenerate} triangle(s) have collinear or zero-length edges with near-zero surface area. Can cause NaN values in lighting and physics.`,
+      description: `${totalDegenerate} triangle(s) have collinear or zero-length edges with near-zero surface area. Can cause unstable shading, baking or downstream geometry processing.`,
       count: totalDegenerate,
-      focusPosition: focusPoints[0],
-      technicalDetails: `Detected across ${affectedMeshNames.length} mesh(es). Area < 1e-9.`,
+      technicalDetails: 'Triangle area is at or below the deterministic area epsilon.',
+      ...localize((s) => s.degenerateTriangles, 'degenerate'),
     });
   } else {
     issues.push({
@@ -71,7 +73,6 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
     });
   }
 
-  // 2. Non-manifold edges
   if (totalNonManifold > 0) {
     issues.push({
       id: 'topo-non-manifold-edges',
@@ -79,90 +80,90 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       severity: 'WARNING',
       layer: 'Health',
       title: `Non-manifold edges: ${totalNonManifold}`,
-      description: `${totalNonManifold} edge(s) are shared by 3 or more faces. Invalid topology for solid volume, 3D printing, or collision hulls.`,
+      description: `${totalNonManifold} edge(s) are shared by more than two faces. This can be problematic for watertight solids, printing, collision hulls or some mesh processing operations.`,
       count: totalNonManifold,
-      focusPosition: focusPoints[1] || focusPoints[0],
       technicalDetails: 'Edge shared by > 2 triangles.',
+      ...localize((s) => s.nonManifoldEdges, 'nonManifold'),
     });
   } else {
     issues.push({
       id: 'topo-non-manifold-ok',
       category: 'Topology',
       severity: 'OK',
-      title: 'Manifold topology intact',
-      description: 'No edges shared by more than 2 faces.',
+      title: 'No non-manifold shared edges',
+      description: 'No edges shared by more than 2 faces were detected.',
     });
   }
 
-  // 3. Boundary / open edges
   if (totalBoundary > 0) {
     issues.push({
       id: 'topo-boundary-edges',
       category: 'Topology',
       severity: 'INFO',
       title: `Boundary / open edges: ${totalBoundary}`,
-      description: `${totalBoundary} edge(s) belong to only 1 triangle. Expected for planar decals, hair cards, or open shells; inspect if model is meant to be watertight.`,
+      description: `${totalBoundary} edge(s) belong to only one triangle. This is expected for planar decals, hair cards or open shells; inspect only if the model is intended to be watertight.`,
       count: totalBoundary,
       technicalDetails: 'Single-triangle incident edges.',
+      ...localize((s) => s.boundaryEdges, 'boundary'),
     });
   } else {
     issues.push({
       id: 'topo-watertight-ok',
       category: 'Topology',
       severity: 'OK',
-      title: 'Watertight closed mesh',
-      description: 'Zero open boundary edges detected; mesh forms a sealed surface.',
+      title: 'No open boundary edges',
+      description: 'Zero open boundary edges were detected.',
     });
   }
 
-  // 4. Isolated / unused vertices
   if (totalIsolated > 0) {
     issues.push({
       id: 'topo-isolated-vertices',
       category: 'Topology',
       severity: 'WARNING',
+      layer: 'Health',
       title: `Isolated vertices: ${totalIsolated}`,
-      description: `${totalIsolated} vertex position(s) exist in buffer but are not indexed by any face. Increases file size and memory without contributing to geometry.`,
+      description: `${totalIsolated} vertex position(s) exist in the buffer but are not referenced by any indexed face.`,
       count: totalIsolated,
       technicalDetails: 'Unindexed positions in vertex array.',
+      ...localize((s) => s.isolatedVertices, 'isolated'),
     });
   }
 
-  // 5. Tiny disconnected components
   if (totalTinyComponents > 0) {
     issues.push({
       id: 'topo-tiny-components',
       category: 'Topology',
       severity: 'WARNING',
+      layer: 'Health',
       title: `Tiny floating components: ${totalTinyComponents}`,
-      description: `${totalTinyComponents} disconnected geometry component(s) contain negligible vertex counts (<2% of mesh). Often leftover debris or modeling artifacts.`,
+      description: `${totalTinyComponents} disconnected geometry component(s) contain a very small fraction of the mesh. They may be intentional detail or leftover debris.`,
       count: totalTinyComponents,
-      focusPosition: focusPoints[2] || focusPoints[0],
+      ...localize((s) => s.tinyComponentsCount, 'tinyComponent'),
     });
   }
 
-  // 6. Thin / needle triangles
   if (totalThinTriangles > 0) {
     issues.push({
       id: 'topo-thin-triangles',
       category: 'Topology',
       severity: 'INFO',
       title: `Needle triangles: ${totalThinTriangles}`,
-      description: `${totalThinTriangles} triangle(s) have an extreme aspect ratio (> 35:1). Can cause rasterizer pixel slivering and shading shimmer.`,
+      description: `${totalThinTriangles} triangle(s) have an extreme aspect ratio (> 35:1). This can contribute to shading shimmer or fragile baking.`,
       count: totalThinTriangles,
-      focusPosition: focusPoints[3] || focusPoints[0],
+      ...localize((s) => s.thinTriangles, 'thinTriangle'),
     });
   }
 
-  // 7. Potential duplicate positions
   if (totalDuplicates > 0) {
     issues.push({
       id: 'topo-duplicate-positions',
       category: 'Topology',
       severity: 'INFO',
       title: `Coincident vertex positions: ${totalDuplicates}`,
-      description: `${totalDuplicates} vertices share identical spatial coordinates. Note: glTF and real-time engines split vertices intentionally at UV seams and hard normal edges.`,
+      description: `${totalDuplicates} vertices share near-identical spatial cells. glTF and real-time meshes may intentionally split vertices at UV seams and hard normal boundaries.`,
       count: totalDuplicates,
+      ...localize((s) => s.potentialDuplicatePositions, 'duplicatePosition'),
     });
   }
 

@@ -4,7 +4,7 @@ import { ExplodedViewController } from './ExplodedViewController';
 import { LightingManager } from './LightingManager';
 import { RenderModeManager } from './RenderModeManager';
 import { BoundsCalculator, AccurateBoundsResult } from './BoundsCalculator';
-import type { LightingConfig, LightingPreset, RenderMode } from '../types';
+import type { HealthIssue, LightingConfig, LightingPreset, RenderMode } from '../types';
 
 export interface SceneManagerCallbacks {
   onMeshSelected?: (uuid: string | null) => void;
@@ -37,6 +37,7 @@ export class SceneManager {
   private originHelper: THREE.Group | null = null;
   private skeletonHelper: THREE.SkeletonHelper | null = null;
   private selectionBoxHelper: THREE.BoxHelper | null = null;
+  private issueMarker: THREE.Mesh | null = null;
 
   private isGridVisible: boolean = true;
   private isAxesVisible: boolean = true;
@@ -171,6 +172,7 @@ export class SceneManager {
   public setAsset(assetRoot: THREE.Group, clips: THREE.AnimationClip[] = []) {
     // 1. Cleanly dispose previous asset
     this.disposeCurrentAsset();
+    this.clearIssueLocalization();
 
     this.currentAssetRoot = assetRoot;
     this.scene.add(this.currentAssetRoot);
@@ -443,6 +445,8 @@ export class SceneManager {
   public selectObject(uuid: string | null) {
     this.selectedMeshUuid = uuid;
 
+    this.clearIssueLocalization();
+
     if (this.selectionBoxHelper) {
       this.scene.remove(this.selectionBoxHelper);
       this.selectionBoxHelper.dispose();
@@ -460,6 +464,70 @@ export class SceneManager {
 
     if (this.callbacks.onMeshSelected) {
       this.callbacks.onMeshSelected(uuid);
+    }
+  }
+
+  public clearIssueLocalization() {
+    if (this.issueMarker) {
+      this.scene.remove(this.issueMarker);
+      this.issueMarker.geometry.dispose();
+      const material = this.issueMarker.material;
+      if (Array.isArray(material)) {
+        material.forEach((entry) => entry.dispose());
+      } else {
+        material.dispose();
+      }
+      this.issueMarker = null;
+    }
+  }
+
+  public localizeIssue(issue: HealthIssue) {
+    this.clearIssueLocalization();
+
+    let targetObject: THREE.Object3D | null = null;
+    if (issue.meshUuid && this.currentAssetRoot) {
+      targetObject = this.currentAssetRoot.getObjectByProperty('uuid', issue.meshUuid) ?? null;
+      if (targetObject) {
+        this.selectObject(issue.meshUuid);
+      }
+    }
+
+    if (issue.focusPosition) {
+      const point = new THREE.Vector3(...issue.focusPosition);
+      let markerRadius = 0.02;
+      let targetDistance: number | undefined;
+
+      if (targetObject) {
+        const bounds = BoundsCalculator.computeAccurateWorldBounds(targetObject);
+        const size = bounds.box.getSize(new THREE.Vector3());
+        const diag = Math.max(size.length(), 0.05);
+        markerRadius = Math.max(0.005, diag * 0.035);
+        targetDistance = Math.max(0.25, diag * 2.2);
+      } else if (this.currentAssetRoot) {
+        const bounds = BoundsCalculator.computeAccurateWorldBounds(this.currentAssetRoot);
+        markerRadius = Math.max(0.005, bounds.box.getSize(new THREE.Vector3()).length() * 0.012);
+      }
+
+      const markerGeometry = new THREE.SphereGeometry(markerRadius, 18, 12);
+      const markerMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffb020,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.95,
+      });
+      this.issueMarker = new THREE.Mesh(markerGeometry, markerMaterial);
+      this.issueMarker.name = '__ascope_internal_issue_marker';
+      this.issueMarker.position.copy(point);
+      this.issueMarker.renderOrder = 10000;
+      this.scene.add(this.issueMarker);
+
+      this.cameraController.focusPosition(issue.focusPosition, targetDistance);
+      return;
+    }
+
+    if (targetObject) {
+      this.cameraController.focusSelectedObject(targetObject, 1.8);
     }
   }
 

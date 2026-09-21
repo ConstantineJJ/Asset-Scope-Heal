@@ -191,6 +191,21 @@ export interface AssetSummary {
   boundingBox: BoundingBoxInfo;
 }
 
+export type TopologyLocalizationKind =
+  | 'degenerate'
+  | 'boundary'
+  | 'nonManifold'
+  | 'isolated'
+  | 'tinyComponent'
+  | 'thinTriangle'
+  | 'duplicatePosition';
+
+export interface TopologyLocalizationSample {
+  focusPoint: [number, number, number];
+  affectedIndices?: number[];
+  element: 'triangle' | 'edge' | 'vertex' | 'component';
+}
+
 export interface TopologyStats {
   meshUuid: string;
   meshName: string;
@@ -210,6 +225,7 @@ export interface TopologyStats {
   triangleCount: number;
   vertexCount: number;
   sampleFocusPoints?: Array<[number, number, number]>;
+  localization?: Partial<Record<TopologyLocalizationKind, TopologyLocalizationSample>>;
 }
 
 export type RenderMode =

@@ -508,6 +508,7 @@ export function App() {
 
   // Scene Tree Handlers
   const handleSelectNode = (uuid: string) => {
+    sceneManagerRef.current?.clearIssueLocalization();
     setSelectedUuid(uuid);
     sceneManagerRef.current?.selectObject(uuid);
   };
@@ -540,12 +541,12 @@ export function App() {
 
   // Health Issue Focus Handler
   const handleFocusIssue = (issue: HealthIssue) => {
-    if (issue.focusPosition && sceneManagerRef.current) {
-      sceneManagerRef.current.cameraController.focusPosition(issue.focusPosition);
-    }
+    if (!sceneManagerRef.current) return;
+
     if (issue.meshUuid) {
-      handleSelectNode(issue.meshUuid);
+      setSelectedUuid(issue.meshUuid);
     }
+    sceneManagerRef.current.localizeIssue(issue);
   };
 
   // Animation Handlers

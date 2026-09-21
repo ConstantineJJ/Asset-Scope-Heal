@@ -6,6 +6,8 @@ export interface RawMeshData {
   positions: Float32Array;
   indices: Uint16Array | Uint32Array | null;
   boundingBoxDiagonal: number;
+  /** Column-major THREE.Matrix4 elements used to convert local diagnostic points to world space. */
+  worldMatrix?: number[];
 }
 
 /**
@@ -13,7 +15,7 @@ export interface RawMeshData {
  * Can be executed on main thread or inside a Web Worker.
  */
 export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
-  const { uuid, name, positions, indices, boundingBoxDiagonal } = meshData;
+  const { uuid, name, positions, indices, boundingBoxDiagonal, worldMatrix } = meshData;
   const vertexCount = positions.length / 3;
   
   let triangleCount = 0;
@@ -32,12 +34,34 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
   let totalArea = 0;
   const areas: number[] = [];
   const focusPoints: Array<[number, number, number]> = [];
+  const localization: NonNullable<TopologyStats['localization']> = {};
+
+  function toWorld(point: [number, number, number]): [number, number, number] {
+    if (!worldMatrix || worldMatrix.length < 16) return point;
+    const [x, y, z] = point;
+    const e = worldMatrix;
+    const w = e[3] * x + e[7] * y + e[11] * z + e[15];
+    const invW = w !== 0 ? 1 / w : 1;
+    return [
+      (e[0] * x + e[4] * y + e[8] * z + e[12]) * invW,
+      (e[1] * x + e[5] * y + e[9] * z + e[13]) * invW,
+      (e[2] * x + e[6] * y + e[10] * z + e[14]) * invW,
+    ];
+  }
+
+  function centroid(a: [number, number, number], b: [number, number, number], c: [number, number, number]): [number, number, number] {
+    return [
+      (a[0] + b[0] + c[0]) / 3,
+      (a[1] + b[1] + c[1]) / 3,
+      (a[2] + b[2] + c[2]) / 3,
+    ];
+  }
 
   const areaEpsilon = Math.max(1e-9, Math.pow(boundingBoxDiagonal * 1e-6, 2));
 
   // Map undirected edge -> count of sharing triangles
   // We can use a Map with string key "min_max" for indices
-  const edgeTriangleCount = new Map<string, number>();
+  const edgeTriangleCount = new Map<string, { count: number; u: number; v: number }>();
 
   // Track referenced vertices to detect isolated vertices
   const referencedVertices = new Uint8Array(vertexCount);
@@ -100,8 +124,18 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
       i2 < i0 ? `${i2}_${i0}` : `${i0}_${i2}`,
     ];
 
-    for (const e of edges) {
-      edgeTriangleCount.set(e, (edgeTriangleCount.get(e) || 0) + 1);
+    const edgePairs: Array<[string, number, number]> = [
+      [edges[0], i0, i1],
+      [edges[1], i1, i2],
+      [edges[2], i2, i0],
+    ];
+    for (const [edgeKey, u, v] of edgePairs) {
+      const existing = edgeTriangleCount.get(edgeKey);
+      if (existing) {
+        existing.count++;
+      } else {
+        edgeTriangleCount.set(edgeKey, { count: 1, u, v });
+      }
     }
 
     addEdgeAdjacency(i0, i1);
@@ -144,12 +178,17 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
       if (degenerateIndices.length < 50) {
         degenerateIndices.push(t);
       }
+      const localCenter = centroid(vA, vB, vC);
+      const worldCenter = toWorld(localCenter);
       if (focusPoints.length < 5) {
-        focusPoints.push([
-          (vA[0] + vB[0] + vC[0]) / 3,
-          (vA[1] + vB[1] + vC[1]) / 3,
-          (vA[2] + vB[2] + vC[2]) / 3,
-        ]);
+        focusPoints.push(worldCenter);
+      }
+      if (!localization.degenerate) {
+        localization.degenerate = {
+          focusPoint: worldCenter,
+          affectedIndices: [t],
+          element: 'triangle',
+        };
       }
     } else {
       // Check needle / thin triangle
@@ -162,12 +201,17 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
       const aspectRatio = maxEdge / Math.max(1e-12, minAltitude);
       if (aspectRatio > 35) {
         thinTriangleCount++;
+        const localCenter = centroid(vA, vB, vC);
+        const worldCenter = toWorld(localCenter);
         if (focusPoints.length < 8) {
-          focusPoints.push([
-            (vA[0] + vB[0] + vC[0]) / 3,
-            (vA[1] + vB[1] + vC[1]) / 3,
-            (vA[2] + vB[2] + vC[2]) / 3,
-          ]);
+          focusPoints.push(worldCenter);
+        }
+        if (!localization.thinTriangle) {
+          localization.thinTriangle = {
+            focusPoint: worldCenter,
+            affectedIndices: [t],
+            element: 'triangle',
+          };
         }
       }
     }
@@ -176,11 +220,33 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
   // Count boundary & non-manifold edges
   let boundaryEdges = 0;
   let nonManifoldEdges = 0;
-  for (const count of edgeTriangleCount.values()) {
-    if (count === 1) {
+  for (const edge of edgeTriangleCount.values()) {
+    if (edge.count === 1) {
       boundaryEdges++;
-    } else if (count > 2) {
+      if (!localization.boundary) {
+        const a: [number, number, number] = [0, 0, 0];
+        const b: [number, number, number] = [0, 0, 0];
+        getVertex(edge.u, a);
+        getVertex(edge.v, b);
+        localization.boundary = {
+          focusPoint: toWorld([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]),
+          affectedIndices: [edge.u, edge.v],
+          element: 'edge',
+        };
+      }
+    } else if (edge.count > 2) {
       nonManifoldEdges++;
+      if (!localization.nonManifold) {
+        const a: [number, number, number] = [0, 0, 0];
+        const b: [number, number, number] = [0, 0, 0];
+        getVertex(edge.u, a);
+        getVertex(edge.v, b);
+        localization.nonManifold = {
+          focusPoint: toWorld([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]),
+          affectedIndices: [edge.u, edge.v],
+          element: 'edge',
+        };
+      }
     }
   }
 
@@ -190,6 +256,18 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
     for (let i = 0; i < vertexCount; i++) {
       if (referencedVertices[i] === 0) {
         isolatedVertices++;
+        if (!localization.isolated) {
+          const point: [number, number, number] = [
+            positions[i * 3],
+            positions[i * 3 + 1],
+            positions[i * 3 + 2],
+          ];
+          localization.isolated = {
+            focusPoint: toWorld(point),
+            affectedIndices: [i],
+            element: 'vertex',
+          };
+        }
       }
     }
   }
@@ -205,12 +283,20 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
 
     componentsCount++;
     let componentVertexCount = 0;
+    let componentSumX = 0;
+    let componentSumY = 0;
+    let componentSumZ = 0;
+    const componentSampleIndices: number[] = [];
     const queue = [i];
     visited[i] = 1;
 
     while (queue.length > 0) {
       const curr = queue.pop()!;
       componentVertexCount++;
+      componentSumX += positions[curr * 3];
+      componentSumY += positions[curr * 3 + 1];
+      componentSumZ += positions[curr * 3 + 2];
+      if (componentSampleIndices.length < 16) componentSampleIndices.push(curr);
 
       const nbrs = vertexNeighbors.get(curr);
       if (nbrs) {
@@ -227,6 +313,17 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
     // Tiny disconnected component if < 2% of vertices or <= 6 vertices when total > 60
     if (vertexCount > 60 && (componentVertexCount < vertexCount * 0.02 || componentVertexCount <= 6)) {
       tinyComponentsCount++;
+      if (!localization.tinyComponent && componentVertexCount > 0) {
+        localization.tinyComponent = {
+          focusPoint: toWorld([
+            componentSumX / componentVertexCount,
+            componentSumY / componentVertexCount,
+            componentSumZ / componentVertexCount,
+          ]),
+          affectedIndices: componentSampleIndices,
+          element: 'component',
+        };
+      }
     }
   }
 
@@ -249,6 +346,13 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
       spatialGrid.set(cellKey, [i]);
     } else {
       potentialDuplicatePositions++;
+      if (!localization.duplicatePosition) {
+        localization.duplicatePosition = {
+          focusPoint: toWorld([ox, oy, oz]),
+          affectedIndices: [existing[0], i],
+          element: 'vertex',
+        };
+      }
       existing.push(i);
     }
   }
@@ -285,5 +389,6 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
     triangleCount,
     vertexCount,
     sampleFocusPoints: focusPoints,
+    localization,
   };
 }

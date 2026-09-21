@@ -396,7 +396,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     </div>
                   </div>
 
-                  {issue.focusPosition && (
+                  {(issue.focusPosition || issue.meshUuid) && (
                     <button
                       onClick={() => onFocusIssue(issue)}
                       className="px-2 py-1 rounded bg-[#272b34] hover:bg-[#323642] text-cyan-400 hover:text-cyan-300 font-medium text-[10px] flex items-center space-x-1 cursor-pointer shrink-0"
@@ -420,6 +420,17 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
                 {(issue.evidence || issue.suggestedAction || issue.repairability) && (
                   <div className="ml-6 pt-1.5 border-t border-[#262932] space-y-1 text-[10px]">
+                    {(issue.meshName || issue.affectedIndices?.length) && (
+                      <div>
+                        <span className="text-gray-500">Location:</span>{' '}
+                        <span className="text-cyan-200">
+                          {issue.meshName ?? 'Affected mesh'}
+                          {issue.affectedIndices?.length
+                            ? ` · indices [${issue.affectedIndices.slice(0, 8).join(', ')}${issue.affectedIndices.length > 8 ? ', …' : ''}]`
+                            : ''}
+                        </span>
+                      </div>
+                    )}
                     {issue.evidence && (
                       <div><span className="text-gray-500">Evidence:</span> <span className="text-gray-300">{issue.evidence}</span></div>
                     )}
