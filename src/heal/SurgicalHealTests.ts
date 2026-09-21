@@ -13,6 +13,7 @@ import type { HealthIssue } from '../types';
 import { createAssetDoctorTestPatient } from '../loaders/SampleModels';
 import { measureGeometryNormals } from '../analysis/NormalsMeasure';
 import { measureSkinWeights } from '../analysis/SkinWeightMeasure';
+import { buildRepairQueueCandidates } from './RepairQueue';
 
 export interface SurgicalHealTestResult {
   name: string;
@@ -501,6 +502,102 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
       operation.capabilities.exportPatch === 'index-only' &&
       preview?.status === 'READY' &&
       preview.affectedTriangles === 1;
+  });
+
+  test('Safe Repair Queue is deterministic and excludes manual-only diagnostics', () => {
+    const issue = (
+      id: string,
+      category: HealthIssue['category'],
+      severity: HealthIssue['severity'],
+      meshUuid: string
+    ): HealthIssue => ({
+      id,
+      category,
+      severity,
+      title: id,
+      description: id,
+      meshUuid,
+      meshName: meshUuid,
+    });
+
+    const queue = buildRepairQueueCandidates([
+      issue('topo-duplicate-positions', 'Topology', 'INFO', 'mesh-e'),
+      issue('skin-zero-weight', 'Skinning', 'ERROR', 'manual-only'),
+      issue('skin-invalid-sum', 'Skinning', 'WARNING', 'mesh-d'),
+      issue('normals-zero', 'Normals', 'WARNING', 'mesh-c'),
+      issue('topo-isolated-vertices', 'Topology', 'WARNING', 'mesh-b'),
+      issue('topo-degenerate-triangles', 'Topology', 'WARNING', 'mesh-a'),
+      // Multiple locations on the same mesh must collapse into one operation.
+      {
+        ...issue('topo-degenerate-triangles', 'Topology', 'WARNING', 'mesh-a'),
+        locations: [
+          {
+            meshUuid: 'mesh-a',
+            meshName: 'mesh-a',
+            affectedElement: 'triangle',
+            affectedIndices: [1],
+            focusPosition: [0, 0, 0],
+          },
+          {
+            meshUuid: 'mesh-a',
+            meshName: 'mesh-a',
+            affectedElement: 'triangle',
+            affectedIndices: [2],
+            focusPosition: [1, 0, 0],
+          },
+        ],
+      },
+    ]);
+
+    return queue.length === 5 &&
+      queue.map((candidate) => candidate.operation).join('|') === [
+        'remove-degenerate-triangles',
+        'remove-unreferenced-vertices',
+        'recalculate-normals',
+        'normalize-skin-weights',
+        'merge-exact-duplicate-vertices',
+      ].join('|') &&
+      queue.every((candidate) => candidate.meshUuid !== 'manual-only');
+  });
+
+  test('Verified multi-repair session survives sequential repairs and last Undo', () => {
+    const first = makeDegenerateFixture();
+    const second = makeDegenerateFixture();
+    const root = new THREE.Group();
+    first.mesh.name = 'QueueMeshA';
+    second.mesh.name = 'QueueMeshB';
+    root.add(first.mesh);
+    root.add(second.mesh);
+
+    const engine = new SurgicalHealEngine();
+    try {
+      engine.previewRemoveDegenerateTriangles(root, first.mesh.uuid);
+      const firstApply = engine.applyPending(root, 'QueueSession.glb');
+      if (!firstApply.report) return false;
+      engine.completeVerification(firstApply.report.operationId, true);
+
+      engine.previewRemoveDegenerateTriangles(root, second.mesh.uuid);
+      const secondApply = engine.applyPending(root, 'QueueSession.glb');
+      if (!secondApply.report) return false;
+      engine.completeVerification(secondApply.report.operationId, true);
+
+      const two = engine.validateCurrentVerifiedSession(root);
+      const undo = engine.undoLast(root);
+      const one = engine.validateCurrentVerifiedSession(root);
+
+      return two.ok &&
+        two.reports.length === 2 &&
+        engine.getActiveReports().length === 1 &&
+        undo.success &&
+        one.ok &&
+        one.reports.length === 1 &&
+        one.reports[0].meshUuid === first.mesh.uuid;
+    } finally {
+      first.mesh.geometry.dispose();
+      second.mesh.geometry.dispose();
+      (first.mesh.material as THREE.Material).dispose();
+      (second.mesh.material as THREE.Material).dispose();
+    }
   });
 
   test('Repair registry ignores diagnostics that have no registered Surgical Heal operation', () => {
