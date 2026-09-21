@@ -10,6 +10,10 @@ export const ru = {
   toolbar: {
     openFile: 'Открыть',
     openFileTitle: 'Открыть локальный .glb или .gltf ассет',
+    export: 'Экспорт',
+    exportTitle: 'Собрать, проверить и скачать исправленный GLB',
+    exportDisabledTitle: 'Экспорт станет доступен после полного VERIFIED текущего исправления',
+    exporting: 'Экспорт…',
     samples: 'Примеры',
     builtInModels: 'Встроенные тестовые модели',
     topologyTests: 'Тесты топологии',
