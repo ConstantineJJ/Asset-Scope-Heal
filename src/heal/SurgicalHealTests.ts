@@ -46,6 +46,67 @@ function makeDegenerateFixture() {
   return { root, mesh };
 }
 
+function makeUnreferencedFixture() {
+  const root = new THREE.Group();
+  const geometry = new THREE.BufferGeometry();
+
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+    7, 7, 7,
+    8, 8, 8,
+  ], 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute([
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+    1, 0, 0,
+    1, 0, 0,
+  ], 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute([
+    0, 0,
+    1, 0,
+    0, 1,
+    0.25, 0.25,
+    0.75, 0.75,
+  ], 2));
+  geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute([
+    0, 1, 0, 0,
+    0, 1, 0, 0,
+    0, 1, 0, 0,
+    2, 0, 0, 0,
+    2, 0, 0, 0,
+  ], 4));
+  geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute([
+    0.5, 0.5, 0, 0,
+    0.6, 0.4, 0, 0,
+    0.7, 0.3, 0, 0,
+    1, 0, 0, 0,
+    1, 0, 0, 0,
+  ], 4));
+
+  geometry.morphAttributes.position = [
+    new THREE.Float32BufferAttribute([
+      0, 0, 0,
+      0.1, 0, 0,
+      0, 0.1, 0,
+      3, 3, 3,
+      4, 4, 4,
+    ], 3),
+  ];
+  geometry.morphTargetsRelative = true;
+  geometry.setIndex([0, 1, 2]);
+  geometry.addGroup(0, 3, 0);
+  geometry.setDrawRange(0, 3);
+
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  mesh.name = 'UnreferencedFixture';
+  root.add(mesh);
+
+  return { root, mesh };
+}
+
 export function runSurgicalHealTests(): SurgicalHealTestResult[] {
   const results: SurgicalHealTestResult[] = [];
 
@@ -339,7 +400,134 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
     } as HealthIssue;
 
     return getRepairOperationForIssue(issue) === null &&
-      listRepairOperations().length === 1;
+      listRepairOperations().length === 2;
+  });
+
+  test('Remove Unreferenced Vertices compacts every supported vertex-domain attribute and Undo restores the original geometry', () => {
+    const { root, mesh } = makeUnreferencedFixture();
+    const engine = new SurgicalHealEngine();
+    const originalGeometry = mesh.geometry;
+    try {
+      const preview = engine.previewRemoveUnreferencedVertices(root, mesh.uuid);
+      const applied = engine.applyPending(root, 'UnreferencedFixture.glb');
+      const pending = engine.getLastOperation()!;
+      engine.completeVerification(pending.operationId, true);
+      const report = engine.getLastOperation()!;
+
+      const compacted = mesh.geometry;
+      const compactedOk =
+        preview.status === 'READY' &&
+        preview.operation === 'remove-unreferenced-vertices' &&
+        preview.metric === 'vertices' &&
+        preview.metricBefore === 5 &&
+        preview.metricAfter === 3 &&
+        preview.affectedVertices === 2 &&
+        applied.success &&
+        compacted !== originalGeometry &&
+        compacted.attributes.position.count === 3 &&
+        compacted.attributes.normal.count === 3 &&
+        compacted.attributes.uv.count === 3 &&
+        compacted.attributes.skinIndex.count === 3 &&
+        compacted.attributes.skinWeight.count === 3 &&
+        compacted.morphAttributes.position?.[0]?.count === 3 &&
+        compacted.groups.length === 1 &&
+        compacted.groups[0].start === 0 &&
+        compacted.groups[0].count === 3 &&
+        compacted.drawRange.start === 0 &&
+        compacted.drawRange.count === 3 &&
+        Array.from(compacted.index!.array).join(',') === '0,1,2' &&
+        report.status === 'VERIFIED' &&
+        report.after?.vertexCount === 3 &&
+        report.after?.isolatedVertices === 0 &&
+        report.after?.triangleCount === 1;
+
+      const undone = engine.undoLast(root);
+      const undoOk =
+        undone.success &&
+        mesh.geometry === originalGeometry &&
+        mesh.geometry.attributes.position.count === 5 &&
+        mesh.geometry.morphAttributes.position?.[0]?.count === 5 &&
+        mesh.geometry.index?.count === 3;
+
+      return compactedOk && undoOk;
+    } finally {
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+  });
+
+  test('Remove Unreferenced Vertices registry entry is geometry-patch capable', () => {
+    const { root, mesh } = makeUnreferencedFixture();
+    const engine = new SurgicalHealEngine();
+    try {
+      const issue = {
+        id: 'topo-isolated-vertices',
+        category: 'Topology',
+        severity: 'WARNING',
+        title: 'Isolated vertices',
+        description: 'Synthetic vertex cleanup fixture',
+        meshUuid: mesh.uuid,
+        meshName: mesh.name,
+      } as HealthIssue;
+
+      const operation = getRepairOperationForIssue(issue);
+      const preview = previewRepairIssue(engine, root, issue);
+      return operation?.kind === 'remove-unreferenced-vertices' &&
+        operation.capabilities.exportPatch === 'geometry' &&
+        preview?.status === 'READY' &&
+        preview.affectedCount === 2;
+    } finally {
+      engine.cancelPreview();
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+  });
+
+  test('Remove Unreferenced Vertices blocks unsupported vertex metadata and mismatched attributes', () => {
+    const first = makeUnreferencedFixture();
+    const second = makeUnreferencedFixture();
+    const engineA = new SurgicalHealEngine();
+    const engineB = new SurgicalHealEngine();
+    try {
+      first.mesh.geometry.userData.vertexMap = [0, 1, 2];
+      const metadataBlocked = engineA.previewRemoveUnreferencedVertices(first.root, first.mesh.uuid);
+
+      second.mesh.geometry.setAttribute('color', new THREE.Float32BufferAttribute([
+        1, 0, 0,
+        0, 1, 0,
+      ], 3));
+      const layoutBlocked = engineB.previewRemoveUnreferencedVertices(second.root, second.mesh.uuid);
+
+      return metadataBlocked.status === 'BLOCKED' &&
+        metadataBlocked.reasonKey === 'heal.errors.vertexMetadataUnsupported' &&
+        layoutBlocked.status === 'BLOCKED' &&
+        layoutBlocked.reasonKey === 'heal.errors.vertexAttributeUnsupported';
+    } finally {
+      first.mesh.geometry.dispose();
+      second.mesh.geometry.dispose();
+      (first.mesh.material as THREE.Material).dispose();
+      (second.mesh.material as THREE.Material).dispose();
+    }
+  });
+
+  test('Unreferenced vertex Heal report survives storage roundtrip', () => {
+    const { root, mesh } = makeUnreferencedFixture();
+    const engine = new SurgicalHealEngine();
+    try {
+      engine.previewRemoveUnreferencedVertices(root, mesh.uuid);
+      engine.applyPending(root, 'VertexCleanup.glb');
+      const id = engine.getLastOperation()!.operationId;
+      engine.completeVerification(id, true);
+      const report = engine.getLastOperation()!;
+      let value = '';
+      const storage = { getItem: () => value, setItem: (_key: string, next: string) => { value = next; } };
+      return report.status === 'VERIFIED' &&
+        saveHealReport(report, storage) &&
+        readHealReport(storage)?.operation === 'remove-unreferenced-vertices';
+    } finally {
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
   });
 
   fixtureTest('Topology extraction respects interleaved attributes and local scale', ({ root, mesh }, engine) => {
