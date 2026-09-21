@@ -320,6 +320,26 @@ export interface HealOperationReport {
   reasons: string[];
 }
 
+export type RepairQueueStatus =
+  | 'idle'
+  | 'running'
+  | 'completed'
+  | 'stopped'
+  | 'blocked'
+  | 'partial'
+  | 'regression'
+  | 'failed';
+
+export interface RepairQueueRunState {
+  status: RepairQueueStatus;
+  completed: number;
+  skipped: number;
+  remaining: number;
+  currentOperation?: HealOperationKind;
+  currentMeshName?: string;
+  stopReason?: string;
+}
+
 export interface HealUndoState {
   available: boolean;
   operation?: HealOperationKind;
