@@ -4,6 +4,12 @@ import { healMetrics, verifyHeal } from './HealVerification';
 import { readHealReport, saveHealReport } from './HealReportStorage';
 import { analyzeMeshTopology } from '../analysis/TopologyAnalyzer';
 import { meshTopologyData } from '../analysis/MeshTopologyData';
+import {
+  getRepairOperationForIssue,
+  listRepairOperations,
+  previewRepairIssue,
+} from './framework/RepairRegistry';
+import type { HealthIssue } from '../types';
 
 export interface SurgicalHealTestResult {
   name: string;
@@ -297,6 +303,43 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
     const undoneBlocked = engine.validateCurrentVerifiedState(root, undone).reasonKey === 'export.errors.healNotVerified';
 
     return historicalBlocked && undoneBlocked;
+  });
+
+  fixtureTest('Repair registry resolves and previews the current operation without UI issue hardcoding', ({ root, mesh }, engine) => {
+    const issue = {
+      id: 'topo-degenerate-triangles',
+      category: 'Topology',
+      severity: 'WARNING',
+      title: 'Degenerate triangles',
+      description: 'Synthetic repair registry fixture',
+      meshUuid: mesh.uuid,
+      meshName: mesh.name,
+    } as HealthIssue;
+
+    const operation = getRepairOperationForIssue(issue);
+    const preview = previewRepairIssue(engine, root, issue);
+
+    return operation?.kind === 'remove-degenerate-triangles' &&
+      operation.capabilities.preview &&
+      operation.capabilities.apply &&
+      operation.capabilities.undo &&
+      operation.capabilities.verify &&
+      operation.capabilities.exportPatch === 'index-only' &&
+      preview?.status === 'READY' &&
+      preview.affectedTriangles === 1;
+  });
+
+  test('Repair registry ignores diagnostics that have no registered Surgical Heal operation', () => {
+    const issue = {
+      id: 'topo-non-manifold-edges',
+      category: 'Topology',
+      severity: 'WARNING',
+      title: 'Non-manifold edges',
+      description: 'Synthetic unregistered repair fixture',
+    } as HealthIssue;
+
+    return getRepairOperationForIssue(issue) === null &&
+      listRepairOperations().length === 1;
   });
 
   fixtureTest('Topology extraction respects interleaved attributes and local scale', ({ root, mesh }, engine) => {
