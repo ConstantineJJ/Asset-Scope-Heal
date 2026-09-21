@@ -3,7 +3,7 @@ import { Box, FileUp, Loader2, Maximize2, Orbit } from 'lucide-react';
 import type { RenderMode } from '../types';
 
 interface ViewportProps {
-  onCanvasMount: (container: HTMLElement) => void;
+  onCanvasMount: (container: HTMLElement) => void | (() => void);
   onFileDrop: (file: File) => void;
   isLoading: boolean;
   fileName?: string;
@@ -23,9 +23,8 @@ export const Viewport: React.FC<ViewportProps> = ({
   const [isDragOver, setIsDragOver] = useState(false);
 
   useEffect(() => {
-    if (containerRef.current) {
-      onCanvasMount(containerRef.current);
-    }
+    if (!containerRef.current) return;
+    return onCanvasMount(containerRef.current);
   }, [onCanvasMount]);
 
   const handleDragOver = (e: React.DragEvent) => {
