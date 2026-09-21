@@ -130,7 +130,7 @@ export class SceneManager {
     svg.setAttribute('width', '64');
     svg.setAttribute('height', '64');
 
-    const makeAxis = (key: 'x' | 'y' | 'z', color: string, labelText: string) => {
+    const makeAxis = (color: string, labelText: string) => {
       const line = document.createElementNS(ns, 'line');
       line.setAttribute('x1', '32');
       line.setAttribute('y1', '32');
@@ -157,9 +157,9 @@ export class SceneManager {
     };
 
     this.orientationAxes = {
-      x: makeAxis('x', '#ef4444', 'X'),
-      y: makeAxis('y', '#22c55e', 'Y'),
-      z: makeAxis('z', '#3b82f6', 'Z'),
+      x: makeAxis('#ef4444', 'X'),
+      y: makeAxis('#22c55e', 'Y'),
+      z: makeAxis('#3b82f6', 'Z'),
     };
 
     host.appendChild(svg);
