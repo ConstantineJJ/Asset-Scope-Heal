@@ -305,6 +305,35 @@ export interface HealUndoState {
   affectedTriangles?: number;
 }
 
+export type ExportVerificationStatus = 'VERIFIED' | 'PARTIAL' | 'REGRESSION' | 'FAILED';
+
+export interface ExportVerificationReport {
+  version: 1;
+  createdAt: string;
+  assetName: string;
+  exportedName: string;
+  healOperationId: string;
+  status: ExportVerificationStatus;
+  reasons: string[];
+  byteLength: number;
+  triangleCountExpected: number;
+  triangleCountActual: number;
+  targetTrianglesExpected: number;
+  targetTrianglesActual: number;
+  targetDegeneratesExpected: number;
+  targetDegeneratesActual: number;
+  meshCountExpected: number;
+  meshCountActual: number;
+  materialCountExpected: number;
+  materialCountActual: number;
+  skinnedMeshCountExpected: number;
+  skinnedMeshCountActual: number;
+  boneCountExpected: number;
+  boneCountActual: number;
+  clipCountExpected: number;
+  clipCountActual: number;
+}
+
 export type RenderMode =
   | 'pbr'
   | 'unlit'
