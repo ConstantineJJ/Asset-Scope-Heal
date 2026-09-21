@@ -16,11 +16,11 @@ Export has its own verification status.
 
 Export is available only when all of the following are true:
 
-- the Heal report belongs to the currently loaded asset;
-- the Heal operation is `VERIFIED`;
-- the full diagnostic refresh is complete;
-- the operation has not been undone;
-- live geometry still byte-matches the geometry captured after the verified Apply;
+- every active Heal report belongs to the currently loaded asset;
+- every active Heal operation is `VERIFIED`;
+- every active repair has a complete diagnostic refresh;
+- no active repair has been undone;
+- the final live geometry of every repaired mesh still matches the latest verified snapshot for that mesh;
 - the pristine source for the current asset is available.
 
 If any condition fails, export is blocked.
@@ -53,14 +53,13 @@ The sample factory creates a new pristine sample instance.
 
 The clean source and current repaired scene are matched by deterministic mesh traversal.
 
-The Repair Registry declares the export patch class for the verified operation.
+A repair session may contain several verified operations across several meshes.
 
-- `index-only`: only the repaired target index buffer is copied.
-- `geometry`: the verified target geometry data is copied, including index, vertex-domain attributes, morph attributes, groups and draw range.
+Asset Doctor identifies every mesh touched by the active verified session and copies the **final geometry data** for those meshes into the fresh source. Index, vertex-domain attributes, morph attributes, groups and draw range are preserved from the repaired state.
 
 No viewport materials, visibility state, pose, helper objects or presentation transforms are copied.
 
-This allows vertex compaction repairs to survive export without serializing presentation-only viewport state.
+This lets sequential topology, normals and skin-weight repairs survive one export without serializing presentation-only viewport state.
 
 ## Serialization
 
@@ -83,10 +82,13 @@ The reopened asset is treated as new evidence.
 Verification checks include:
 
 - total triangle count;
-- repaired target triangle count;
-- repaired target degenerate-triangle count;
-- repaired target vertex count;
-- repaired target unreferenced-vertex count;
+- repair operation count and repaired mesh count;
+- final geometry signature of every repaired mesh;
+- most recent repaired target triangle count;
+- most recent repaired target degenerate-triangle count;
+- most recent repaired target vertex count;
+- most recent repaired target unreferenced-vertex count;
+- invalid normals and invalid skin-weight counts where applicable;
 - mesh count;
 - mesh names / mesh types / vertex counts / triangle layout;
 - material count and material structure;
