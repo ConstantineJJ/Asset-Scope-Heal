@@ -347,6 +347,8 @@ export interface ExportVerificationReport {
   targetUnreferencedActual: number;
   targetInvalidNormalsExpected: number;
   targetInvalidNormalsActual: number;
+  targetDuplicatePositionsExpected: number;
+  targetDuplicatePositionsActual: number;
   meshCountExpected: number;
   meshCountActual: number;
   materialCountExpected: number;
