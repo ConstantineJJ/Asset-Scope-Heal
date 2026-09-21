@@ -27,6 +27,8 @@ import type {
   HealthCategory,
   HealthIssue,
   HealthSeverity,
+  HealPreview,
+  HealUndoState,
   LightingConfig,
   MaterialInfo,
   ProgressiveAnalysisState,
@@ -50,6 +52,12 @@ interface InspectorPanelProps {
   onFocusIssue: (issue: HealthIssue) => void;
   isIssueFocusActive: boolean;
   onRestoreIssueView: () => void;
+  healPreview: HealPreview | null;
+  healUndoState: HealUndoState;
+  onPreviewHeal: (issue: HealthIssue) => void;
+  onCancelHealPreview: () => void;
+  onApplyHeal: () => void;
+  onUndoHeal: () => void;
   onSelectMeshByUuid: (uuid: string) => void;
 }
 
@@ -67,6 +75,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onFocusIssue,
   isIssueFocusActive,
   onRestoreIssueView,
+  healPreview,
+  healUndoState,
+  onPreviewHeal,
+  onCancelHealPreview,
+  onApplyHeal,
+  onUndoHeal,
   onSelectMeshByUuid,
 }) => {
   const { t } = useI18n();
@@ -160,6 +174,26 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       affectedIndices: location.affectedIndices,
       focusPosition: location.focusPosition,
     });
+  };
+
+  const issueAtCurrentLocation = (issue: HealthIssue): HealthIssue => {
+    const locations = issue.locations ?? [];
+    if (locations.length === 0) return issue;
+
+    const index = Math.min(
+      Math.max(locationIndexByIssue[issue.id] ?? 0, 0),
+      locations.length - 1
+    );
+    const location = locations[index];
+
+    return {
+      ...issue,
+      meshUuid: location.meshUuid,
+      meshName: location.meshName,
+      affectedElement: location.affectedElement,
+      affectedIndices: location.affectedIndices,
+      focusPosition: location.focusPosition,
+    };
   };
 
   const moveIssueLocation = (issue: HealthIssue, direction: -1 | 1) => {
@@ -290,6 +324,25 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               </div>
             )}
           </div>
+
+          {healUndoState.available && (
+            <div className="bg-[#1c1e24] border border-emerald-900/60 rounded p-2.5 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-emerald-400">
+                  {t('heal.lastOperation')}
+                </div>
+                <div className="text-[10px] text-gray-300 truncate">
+                  {t('heal.removedTriangles', { count: healUndoState.affectedTriangles ?? 0 })} · {healUndoState.meshName}
+                </div>
+              </div>
+              <button
+                onClick={onUndoHeal}
+                className="px-2 py-1 rounded bg-[#20282a] border border-emerald-800 text-emerald-300 hover:text-white hover:bg-[#263234] cursor-pointer text-[10px] font-medium shrink-0"
+              >
+                {t('heal.undo')}
+              </button>
+            </div>
+          )}
 
           {/* Progressive Analysis Pipeline Tracker */}
           <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-1.5">
@@ -511,10 +564,97 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                       <div><span className="text-gray-500">{t('inspector.next')}:</span> <span className="text-gray-300">{issue.suggestedAction}</span></div>
                     )}
                     {issue.repairability && issue.repairability !== 'NONE' && (
-                      <span className="inline-block mt-1 px-1.5 py-0.5 rounded bg-[#15171c] border border-[#343845] text-amber-300 font-mono uppercase">
-                        {t('inspector.repair')}: {issue.repairability}
-                      </span>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="inline-block px-1.5 py-0.5 rounded bg-[#15171c] border border-[#343845] text-amber-300 font-mono uppercase">
+                          {t('inspector.repair')}: {issue.repairability}
+                        </span>
+                        {issue.id === 'topo-degenerate-triangles' && issue.meshUuid && (
+                          <button
+                            onClick={() => onPreviewHeal(issueAtCurrentLocation(issue))}
+                            className="px-1.5 py-0.5 rounded bg-amber-950/40 border border-amber-800 text-amber-300 hover:text-amber-100 hover:bg-amber-950/70 cursor-pointer"
+                          >
+                            {t('heal.previewFix')}
+                          </button>
+                        )}
+                      </div>
                     )}
+
+                    {healPreview &&
+                      healPreview.issueId === issue.id &&
+                      healPreview.meshUuid === issueAtCurrentLocation(issue).meshUuid && (
+                        <div className="mt-2 p-2 rounded border border-amber-900/70 bg-[#17181c] space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-amber-300 uppercase tracking-wider text-[9px]">
+                              {t('heal.previewTitle')}
+                            </span>
+                            <span className={`font-mono text-[9px] ${
+                              healPreview.status === 'READY' ? 'text-emerald-400' : 'text-rose-400'
+                            }`}>
+                              {healPreview.status}
+                            </span>
+                          </div>
+
+                          {healPreview.status === 'READY' ? (
+                            <>
+                              <div className="grid grid-cols-2 gap-1 text-[10px]">
+                                <div className="p-1 rounded bg-[#121418] border border-[#262932]">
+                                  <span className="text-gray-500 block">{t('heal.triangles')}</span>
+                                  <span className="font-mono text-gray-200">
+                                    {healPreview.trianglesBefore} → {healPreview.trianglesAfter}
+                                  </span>
+                                </div>
+                                <div className="p-1 rounded bg-[#121418] border border-[#262932]">
+                                  <span className="text-gray-500 block">{t('heal.remove')}</span>
+                                  <span className="font-mono text-amber-300">
+                                    {healPreview.affectedTriangles}
+                                  </span>
+                                </div>
+                                <div className="p-1 rounded bg-[#121418] border border-[#262932]">
+                                  <span className="text-gray-500 block">{t('heal.boundaryEdges')}</span>
+                                  <span className="font-mono text-gray-200">
+                                    {healPreview.boundaryEdgesBefore} → {healPreview.boundaryEdgesAfter}
+                                  </span>
+                                </div>
+                                <div className="p-1 rounded bg-[#121418] border border-[#262932]">
+                                  <span className="text-gray-500 block">{t('heal.nonManifoldEdges')}</span>
+                                  <span className="font-mono text-gray-200">
+                                    {healPreview.nonManifoldEdgesBefore} → {healPreview.nonManifoldEdgesAfter}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="text-[9px] text-amber-200/80">
+                                {t('heal.conditionalWarning')}
+                              </div>
+                              <div className="flex items-center gap-1.5 pt-1">
+                                <button
+                                  onClick={onApplyHeal}
+                                  className="px-2 py-1 rounded bg-amber-700 hover:bg-amber-600 text-white font-medium cursor-pointer"
+                                >
+                                  {t('heal.apply')}
+                                </button>
+                                <button
+                                  onClick={onCancelHealPreview}
+                                  className="px-2 py-1 rounded bg-[#242730] border border-[#343845] text-gray-300 hover:text-white cursor-pointer"
+                                >
+                                  {t('heal.cancel')}
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-[10px] text-rose-300">
+                                {healPreview.reason ?? t('heal.blocked')}
+                              </div>
+                              <button
+                                onClick={onCancelHealPreview}
+                                className="px-2 py-1 rounded bg-[#242730] border border-[#343845] text-gray-300 hover:text-white cursor-pointer"
+                              >
+                                {t('heal.closePreview')}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
                   </div>
                 )}
               </div>
