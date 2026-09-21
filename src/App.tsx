@@ -118,6 +118,7 @@ export function App() {
   // FPS & Metrics
   const [fps, setFps] = useState(60);
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
+  const [isIssueFocusActive, setIsIssueFocusActive] = useState(false);
 
   // Initialize Loader & Worker Services
   useEffect(() => {
@@ -346,6 +347,7 @@ export function App() {
       setExplodedAmount(0);
       setSelectedUuid(null);
       setSelectedNode(null);
+      setIsIssueFocusActive(false);
 
       if (sceneManagerRef.current) {
         sceneManagerRef.current.setAsset(root, clips);
@@ -509,6 +511,7 @@ export function App() {
   // Scene Tree Handlers
   const handleSelectNode = (uuid: string) => {
     sceneManagerRef.current?.clearIssueLocalization();
+    setIsIssueFocusActive(false);
     setSelectedUuid(uuid);
     sceneManagerRef.current?.selectObject(uuid);
   };
@@ -547,6 +550,12 @@ export function App() {
       setSelectedUuid(issue.meshUuid);
     }
     sceneManagerRef.current.localizeIssue(issue);
+    setIsIssueFocusActive(true);
+  };
+
+  const handleRestoreIssueView = () => {
+    sceneManagerRef.current?.restoreIssueView();
+    setIsIssueFocusActive(false);
   };
 
   // Animation Handlers
@@ -666,6 +675,8 @@ export function App() {
           lightingConfig={lightingConfig}
           onUpdateLighting={handleUpdateLighting}
           onFocusIssue={handleFocusIssue}
+          isIssueFocusActive={isIssueFocusActive}
+          onRestoreIssueView={handleRestoreIssueView}
           onSelectMeshByUuid={handleSelectNode}
         />
       </main>
