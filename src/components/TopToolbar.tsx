@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Camera,
@@ -78,7 +78,29 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
   isAnalyzing,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sampleMenuRef = useRef<HTMLDivElement>(null);
+  const [sampleMenuOpen, setSampleMenuOpen] = useState(false);
   const { language, setLanguage, t } = useI18n();
+
+  useEffect(() => {
+    if (!sampleMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!sampleMenuRef.current?.contains(event.target as Node)) {
+        setSampleMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSampleMenuOpen(false);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [sampleMenuOpen]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -133,43 +155,42 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
         </button>
 
         {/* Sample Models Dropdown */}
-        <div className="relative group">
+        <div ref={sampleMenuRef} className="relative">
           <button
             id="btn-sample-models"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={sampleMenuOpen}
+            onClick={() => setSampleMenuOpen((open) => !open)}
             className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-[#1f2228] hover:bg-[#272a32] border border-[#323642] text-gray-300 font-medium transition cursor-pointer"
           >
             <Layers className="w-3.5 h-3.5 text-blue-400" />
             <span className="hidden md:inline">{t('toolbar.samples')}</span>
-            <ChevronDown className="w-3 h-3 text-gray-400" />
+            <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${sampleMenuOpen ? 'rotate-180' : ''}`} />
           </button>
-          <div className="absolute left-0 top-full mt-1 w-64 bg-[#1e2127] border border-[#333742] rounded-md shadow-xl py-1 hidden group-hover:block z-50">
-            <div className="px-3 py-1 text-[10px] uppercase font-semibold text-gray-400 border-b border-[#2d313a]">
-              {t('toolbar.builtInModels')}
+          {sampleMenuOpen && (
+            <div
+              role="menu"
+              className="absolute left-0 top-full mt-1 w-72 bg-[#1e2127] border border-[#333742] rounded-md shadow-xl py-1 z-50"
+            >
+              <div className="px-3 py-1 text-[10px] uppercase font-semibold text-gray-400 border-b border-[#2d313a]">
+                {t('toolbar.builtInModels')}
+              </div>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  onSelectSample('test-patient');
+                  setSampleMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2.5 hover:bg-[#282c35] flex flex-col cursor-pointer"
+              >
+                <span className="font-medium text-amber-300">Asset Doctor Test Patient</span>
+                <span className="text-[10px] leading-relaxed text-gray-400">
+                  {t('toolbar.testPatientDescription')}
+                </span>
+              </button>
             </div>
-            <button
-              onClick={() => onSelectSample('drone')}
-              className="w-full text-left px-3 py-2 hover:bg-[#282c35] flex flex-col cursor-pointer"
-            >
-              <span className="font-medium text-gray-200">Explorer Drone MK4</span>
-              <span className="text-[10px] text-gray-400">Segmented hard-surface with hover anim</span>
-            </button>
-            <button
-              onClick={() => onSelectSample('topo-specimen')}
-              className="w-full text-left px-3 py-2 hover:bg-[#282c35] flex flex-col cursor-pointer border-t border-[#262932]"
-            >
-              <span className="font-medium text-amber-400 flex items-center space-x-1">
-                <span>Topology Diagnostic Specimen</span>
-              </span>
-              <span className="text-[10px] text-gray-400">Degenerate faces, non-manifold edges, needle faces</span>
-            </button>
-            <button
-              onClick={() => onSelectSample('rigged-robot')}
-              className="w-full text-left px-3 py-2 hover:bg-[#282c35] flex flex-col cursor-pointer border-t border-[#262932]"
-            >
-              <span className="font-medium text-gray-200">Rigged Bipedal Unit</span>
-              <span className="text-[10px] text-gray-400">Armature bones, skinning weights & walk root motion</span>
-            </button>
-          </div>
+          )}
         </div>
 
         {/* Unit Tests Button */}
