@@ -51,7 +51,7 @@ function remapAttribute(attribute: Attribute, retained: number[]): THREE.BufferA
   const sourceWithGpuType = attribute as Attribute & { gpuType?: number };
   const resultWithGpuType = result as THREE.BufferAttribute & { gpuType?: number };
   if (sourceWithGpuType.gpuType !== undefined) {
-    resultWithGpuType.gpuType = sourceWithGpuType.gpuType;
+    (resultWithGpuType as any).gpuType = sourceWithGpuType.gpuType;
   }
 
   return result;
@@ -87,8 +87,10 @@ export function copyGeometryData(target: THREE.BufferGeometry, source: THREE.Buf
   }
 
   target.morphAttributes = {};
-  for (const [name, attributes] of Object.entries(source.morphAttributes)) {
-    target.morphAttributes[name] = attributes.map((attribute) => denseCloneAttribute(attribute));
+  const targetMorphs = target.morphAttributes as Record<string, Attribute[]>;
+  const sourceMorphs = source.morphAttributes as Record<string, Attribute[]>;
+  for (const [name, attributes] of Object.entries(sourceMorphs)) {
+    targetMorphs[name] = attributes.map((attribute) => denseCloneAttribute(attribute));
   }
 
   target.morphTargetsRelative = source.morphTargetsRelative;
@@ -103,8 +105,10 @@ export function geometryDataEquivalent(left: THREE.BufferGeometry, right: THREE.
   const rightNames = Object.keys(right.attributes).sort();
   if (JSON.stringify(leftNames) !== JSON.stringify(rightNames)) return false;
 
-  const leftMorphNames = Object.keys(left.morphAttributes).sort();
-  const rightMorphNames = Object.keys(right.morphAttributes).sort();
+  const leftMorphs = left.morphAttributes as Record<string, Attribute[]>;
+  const rightMorphs = right.morphAttributes as Record<string, Attribute[]>;
+  const leftMorphNames = Object.keys(leftMorphs).sort();
+  const rightMorphNames = Object.keys(rightMorphs).sort();
   if (JSON.stringify(leftMorphNames) !== JSON.stringify(rightMorphNames)) return false;
   if (left.morphTargetsRelative !== right.morphTargetsRelative) return false;
   if (JSON.stringify(left.groups) !== JSON.stringify(right.groups)) return false;
@@ -130,8 +134,8 @@ export function geometryDataEquivalent(left: THREE.BufferGeometry, right: THREE.
   }
 
   for (const name of leftMorphNames) {
-    const a = left.morphAttributes[name] ?? [];
-    const b = right.morphAttributes[name] ?? [];
+    const a = leftMorphs[name] ?? [];
+    const b = rightMorphs[name] ?? [];
     if (a.length !== b.length) return false;
     for (let index = 0; index < a.length; index++) {
       if (!equalAttribute(a[index], b[index])) return false;
@@ -183,7 +187,8 @@ export function planRemoveUnreferencedVertices(
     }
   }
 
-  for (const attributes of Object.values(geometry.morphAttributes)) {
+  const geometryMorphs = geometry.morphAttributes as Record<string, Attribute[]>;
+  for (const attributes of Object.values(geometryMorphs)) {
     for (const attribute of attributes) {
       if (!validVertexAttribute(attribute, vertexCount)) {
         return { reasonKey: 'heal.errors.vertexAttributeUnsupported' };
@@ -229,8 +234,9 @@ export function planRemoveUnreferencedVertices(
     replacement.setAttribute(name, remapAttribute(attribute, retained));
   }
 
-  for (const [name, attributes] of Object.entries(geometry.morphAttributes)) {
-    replacement.morphAttributes[name] = attributes.map((attribute) => remapAttribute(attribute, retained));
+  const replacementMorphs = replacement.morphAttributes as Record<string, Attribute[]>;
+  for (const [name, attributes] of Object.entries(geometryMorphs)) {
+    replacementMorphs[name] = attributes.map((attribute) => remapAttribute(attribute, retained));
   }
 
   replacement.morphTargetsRelative = geometry.morphTargetsRelative;
@@ -239,7 +245,7 @@ export function planRemoveUnreferencedVertices(
   const sourceIndexWithGpuType = index as THREE.BufferAttribute & { gpuType?: number };
   const nextIndexWithGpuType = nextIndex as THREE.BufferAttribute & { gpuType?: number };
   if (sourceIndexWithGpuType.gpuType !== undefined) {
-    nextIndexWithGpuType.gpuType = sourceIndexWithGpuType.gpuType;
+    (nextIndexWithGpuType as any).gpuType = sourceIndexWithGpuType.gpuType;
   }
   replacement.setIndex(nextIndex);
   copyGroupsAndRange(geometry, replacement);
