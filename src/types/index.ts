@@ -111,6 +111,8 @@ export interface SkinningStats {
   invalidWeightSumVertices: number;
   unusedBonesCount: number;
   bones: BoneInfo[];
+  invalidWeightLocations?: DiagnosticLocation[];
+  zeroWeightLocations?: DiagnosticLocation[];
 }
 
 export interface BoundingBoxInfo {
@@ -243,7 +245,8 @@ export type HealOperationKind =
   | 'remove-degenerate-triangles'
   | 'remove-unreferenced-vertices'
   | 'recalculate-normals'
-  | 'merge-exact-duplicate-vertices';
+  | 'merge-exact-duplicate-vertices'
+  | 'normalize-skin-weights';
 
 export interface HealPreview {
   reasonKey?: string;
@@ -259,7 +262,7 @@ export interface HealPreview {
   trianglesAfter: number;
   affectedTriangles: number;
   affectedCount: number;
-  metric: 'triangles' | 'vertices' | 'normals' | 'duplicates';
+  metric: 'triangles' | 'vertices' | 'normals' | 'duplicates' | 'weights';
   metricBefore: number;
   metricAfter: number;
   verticesBefore?: number;
@@ -294,6 +297,8 @@ export type HealMetrics = Pick<TopologyStats,
     normalCount?: number;
     invalidNormals?: number;
     missingNormals?: number;
+    invalidSkinWeights?: number;
+    zeroWeightVertices?: number;
   };
 
 /** Serializable audit evidence, never a persisted undo buffer or proof about a newly loaded asset. */
@@ -349,6 +354,8 @@ export interface ExportVerificationReport {
   targetInvalidNormalsActual: number;
   targetDuplicatePositionsExpected: number;
   targetDuplicatePositionsActual: number;
+  targetInvalidSkinWeightsExpected: number;
+  targetInvalidSkinWeightsActual: number;
   meshCountExpected: number;
   meshCountActual: number;
   materialCountExpected: number;
