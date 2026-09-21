@@ -2,7 +2,7 @@ import type { HealOperationReport } from '../types';
 import { healMetricKeys } from './HealVerification';
 
 const STORAGE_KEY = 'asset-doctor.last-heal.v2';
-type ReportStorage = Pick<Storage, 'getItem' | 'setItem'>;
+type ReportStorage = Pick<Storage, 'getItem' | 'setItem'> & Partial<Pick<Storage, 'removeItem'>>;
 
 export function readHealReport(storage?: ReportStorage): HealOperationReport | null {
   try {
@@ -35,4 +35,19 @@ export function saveHealReport(report: HealOperationReport, storage?: ReportStor
     (storage ?? window.localStorage).setItem(STORAGE_KEY, JSON.stringify(report));
     return true;
   } catch { return false; }
+}
+
+
+export function clearHealReport(storage?: ReportStorage): boolean {
+  try {
+    const target = storage ?? window.localStorage;
+    if (typeof target.removeItem === 'function') {
+      target.removeItem(STORAGE_KEY);
+    } else {
+      target.setItem(STORAGE_KEY, 'null');
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
