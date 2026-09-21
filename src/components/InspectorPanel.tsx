@@ -562,7 +562,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                                           ? 'heal.metrics.invalidNormals'
                                           : healPreview.metric === 'duplicates'
                                             ? 'heal.metrics.potentialDuplicatePositions'
-                                            : 'heal.metrics.triangleCount'
+                                            : healPreview.metric === 'weights'
+                                              ? 'heal.metrics.invalidSkinWeights'
+                                              : 'heal.metrics.triangleCount'
                                     )}
                                   </span>
                                   <span className="font-mono text-gray-200">
@@ -571,7 +573,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                                 </div>
                                 <div className="p-1 rounded bg-[#121418] border border-[#262932]">
                                   <span className="text-gray-500 block">
-                                    {t(healPreview.metric === 'normals' ? 'heal.fix' : 'heal.remove')}
+                                    {t(
+                                      healPreview.metric === 'normals' || healPreview.metric === 'weights'
+                                        ? 'heal.fix'
+                                        : 'heal.remove'
+                                    )}
                                   </span>
                                   <span className="font-mono text-amber-300">
                                     {healPreview.affectedCount}
