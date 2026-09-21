@@ -735,6 +735,7 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
       // Break UV equality for one duplicate pair. One exact pair may remain, but
       // the resulting topology change must still satisfy all safety gates.
       seam.mesh.geometry.getAttribute('uv').setX(3, 0.55);
+      seam.mesh.geometry.getAttribute('uv').setY(5, 0.95);
       seam.mesh.geometry.getAttribute('uv').needsUpdate = true;
       const seamPreview = a.previewMergeExactDuplicateVertices(seam.root, seam.mesh.uuid);
 
