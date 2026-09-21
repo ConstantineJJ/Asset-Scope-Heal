@@ -15,6 +15,7 @@ export function readHealReport(storage?: ReportStorage): HealOperationReport | n
           'remove-unreferenced-vertices',
           'recalculate-normals',
           'merge-exact-duplicate-vertices',
+          'normalize-skin-weights',
         ].includes(report.operation) ||
         !['operationId', 'assetName', 'meshUuid', 'meshName', 'appliedAt'].every(key => typeof report[key] === 'string') ||
         !status(report.status) || !status(report.targetStatus) ||
