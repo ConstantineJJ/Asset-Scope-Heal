@@ -640,6 +640,11 @@ export class SceneManager {
     this.issueReturnView = null;
   }
 
+  public cancelIssueInspection() {
+    this.clearIssueLocalization();
+    this.issueReturnView = null;
+  }
+
   public localizeIssue(issue: HealthIssue) {
     this.captureIssueReturnView();
     this.clearIssueLocalization();
