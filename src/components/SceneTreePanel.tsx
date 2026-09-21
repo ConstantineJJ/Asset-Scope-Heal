@@ -14,6 +14,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { SceneNodeInfo } from '../types';
+import { useI18n } from '../i18n';
 
 interface SceneTreePanelProps {
   treeRoot: SceneNodeInfo | null;
@@ -34,6 +35,7 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
   onShowAll,
   onFocusNode,
 }) => {
+  const { t } = useI18n();
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
 
@@ -116,7 +118,7 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
                   onFocusNode(node.uuid);
                 }}
                 className="p-1 hover:bg-[#323642] rounded text-gray-400 hover:text-cyan-400"
-                title="Focus part in viewport"
+                title={t('scene.focusTitle')}
               >
                 <Focus className="w-3 h-3" />
               </button>
@@ -126,7 +128,7 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
                   onIsolateNode(node.uuid);
                 }}
                 className="px-1 py-0.5 hover:bg-[#323642] rounded text-[10px] text-gray-400 hover:text-amber-400 font-mono"
-                title="Isolate this mesh"
+                title={t('scene.isolateTitle')}
               >
                 ISO
               </button>
@@ -138,7 +140,7 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
                 className={`p-1 hover:bg-[#323642] rounded ${
                   node.visible ? 'text-gray-400 hover:text-white' : 'text-red-400'
                 }`}
-                title={node.visible ? 'Hide part' : 'Show part'}
+                title={node.visible ? t('scene.hideTitle') : t('scene.showTitle')}
               >
                 {node.visible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
               </button>
@@ -162,15 +164,15 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
         <div className="flex items-center space-x-2">
           <Layers className="w-3.5 h-3.5 text-cyan-400" />
           <span className="font-semibold text-xs text-gray-200 tracking-wide uppercase">
-            Scene Hierarchy
+            {t('scene.title')}
           </span>
         </div>
         <button
           onClick={onShowAll}
           className="text-[10px] text-cyan-400 hover:text-cyan-300 font-medium px-2 py-0.5 rounded bg-[#20232a] hover:bg-[#292d37] transition cursor-pointer"
-          title="Make all parts visible"
+          title={t('scene.showAllTitle')}
         >
-          Show All
+          {t('scene.showAll')}
         </button>
       </div>
 
@@ -180,7 +182,7 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
           <Search className="w-3 h-3 text-gray-400 mr-1.5 shrink-0" />
           <input
             type="text"
-            placeholder="Search hierarchy..."
+            placeholder={t('scene.searchPlaceholder')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-transparent text-gray-200 text-xs focus:outline-none placeholder-gray-400"
@@ -202,7 +204,7 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
           renderNode(treeRoot)
         ) : (
           <div className="p-6 text-center text-xs text-gray-400">
-            No active 3D scene loaded.
+            {t('scene.empty')}
           </div>
         )}
       </div>
@@ -212,7 +214,7 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
         <div className="p-2 border-t border-[#262932] bg-[#141519] text-[10px] text-gray-400 flex items-center justify-between">
           <span>{treeRoot.name}</span>
           <span className="font-mono">
-            {treeRoot.children?.length || 0} top nodes
+            {treeRoot.children?.length || 0} {t('scene.topNodes')}
           </span>
         </div>
       )}

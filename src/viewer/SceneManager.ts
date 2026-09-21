@@ -37,7 +37,6 @@ export class SceneManager {
   private originHelper: THREE.Group | null = null;
   private skeletonHelper: THREE.SkeletonHelper | null = null;
   private selectionBoxHelper: THREE.BoxHelper | null = null;
-  private issueMarker: THREE.Mesh | null = null;
   private issueOverlay: THREE.Object3D | null = null;
 
   private isGridVisible: boolean = true;
@@ -469,18 +468,6 @@ export class SceneManager {
   }
 
   public clearIssueLocalization() {
-    if (this.issueMarker) {
-      this.scene.remove(this.issueMarker);
-      this.issueMarker.geometry.dispose();
-      const material = this.issueMarker.material;
-      if (Array.isArray(material)) {
-        material.forEach((entry) => entry.dispose());
-      } else {
-        material.dispose();
-      }
-      this.issueMarker = null;
-    }
-
     if (this.issueOverlay) {
       this.scene.remove(this.issueOverlay);
       this.issueOverlay.traverse((obj) => {
@@ -643,34 +630,14 @@ export class SceneManager {
       : issue.focusPosition;
 
     if (focusTuple) {
-      const point = new THREE.Vector3(...focusTuple);
-      let markerRadius = 0.02;
       let targetDistance: number | undefined;
 
       if (targetObject) {
         const bounds = BoundsCalculator.computeAccurateWorldBounds(targetObject);
         const size = bounds.box.getSize(new THREE.Vector3());
         const diag = Math.max(size.length(), 0.05);
-        markerRadius = Math.max(0.005, diag * 0.035);
         targetDistance = Math.max(0.25, diag * 2.2);
-      } else if (this.currentAssetRoot) {
-        const bounds = BoundsCalculator.computeAccurateWorldBounds(this.currentAssetRoot);
-        markerRadius = Math.max(0.005, bounds.box.getSize(new THREE.Vector3()).length() * 0.012);
       }
-
-      const markerGeometry = new THREE.SphereGeometry(markerRadius, 18, 12);
-      const markerMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffb020,
-        depthTest: false,
-        depthWrite: false,
-        transparent: true,
-        opacity: 0.70,
-      });
-      this.issueMarker = new THREE.Mesh(markerGeometry, markerMaterial);
-      this.issueMarker.name = '__ascope_internal_issue_marker';
-      this.issueMarker.position.copy(point);
-      this.issueMarker.renderOrder = 10000;
-      this.scene.add(this.issueMarker);
 
       this.cameraController.focusPosition(focusTuple, targetDistance);
       return;

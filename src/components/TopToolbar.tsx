@@ -18,8 +18,10 @@ import {
   TestTube2,
   Upload,
   Zap,
+  Languages,
 } from 'lucide-react';
 import type { LightingPreset, RenderMode } from '../types';
+import { useI18n } from '../i18n';
 
 interface TopToolbarProps {
   onOpenFile: (file: File) => void;
@@ -69,6 +71,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
   isAnalyzing,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { language, setLanguage, t } = useI18n();
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -104,10 +107,10 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
           id="btn-open-file"
           onClick={() => fileInputRef.current?.click()}
           className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-[#252830] hover:bg-[#2e323c] border border-[#373b46] text-gray-100 font-medium transition cursor-pointer"
-          title="Open local .glb or .gltf asset"
+          title={t('toolbar.openFileTitle')}
         >
           <Upload className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Open File</span>
+          <span>{t('toolbar.openFile')}</span>
         </button>
 
         {/* Sample Models Dropdown */}
@@ -117,12 +120,12 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
             className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-[#1f2228] hover:bg-[#272a32] border border-[#323642] text-gray-300 font-medium transition cursor-pointer"
           >
             <Layers className="w-3.5 h-3.5 text-blue-400" />
-            <span className="hidden md:inline">Samples</span>
+            <span className="hidden md:inline">{t('toolbar.samples')}</span>
             <ChevronDown className="w-3 h-3 text-gray-400" />
           </button>
           <div className="absolute left-0 top-full mt-1 w-64 bg-[#1e2127] border border-[#333742] rounded-md shadow-xl py-1 hidden group-hover:block z-50">
             <div className="px-3 py-1 text-[10px] uppercase font-semibold text-gray-400 border-b border-[#2d313a]">
-              Built-in Test Models
+              {t('toolbar.builtInModels')}
             </div>
             <button
               onClick={() => onSelectSample('drone')}
@@ -155,10 +158,10 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
           id="btn-topology-tests"
           onClick={onOpenUnitTests}
           className="hidden lg:flex items-center space-x-1.5 px-2 py-1.5 rounded bg-[#1f2228] hover:bg-[#272a32] border border-[#323642] text-emerald-400 hover:text-emerald-300 transition cursor-pointer"
-          title="Run deterministic topology algorithm verification tests"
+          title={t('toolbar.topologyTestsTitle')}
         >
           <TestTube2 className="w-3.5 h-3.5" />
-          <span>Topology Tests</span>
+          <span>{t('toolbar.topologyTests')}</span>
         </button>
       </div>
 
@@ -167,7 +170,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
         {/* Render Mode Select */}
         <div className="flex items-center space-x-1 bg-[#1e2127] px-2 py-1 rounded border border-[#2d313a]">
           <Palette className="w-3.5 h-3.5 text-gray-400" />
-          <span className="text-gray-400 text-[11px] hidden xl:inline">Mode:</span>
+          <span className="text-gray-400 text-[11px] hidden xl:inline">{t('toolbar.mode')}</span>
           <select
             id="select-render-mode"
             value={renderMode}
@@ -257,12 +260,24 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
         </div>
       </div>
 
-      {/* Right: Exploded View, Viewport Helpers, Metrics */}
+      {/* Right: Language, Exploded View, Viewport Helpers, Metrics */}
       <div className="flex items-center space-x-2">
+        <div className="hidden lg:flex items-center space-x-1 bg-[#1e2127] px-1.5 py-1 rounded border border-[#2d313a]">
+          <Languages className="w-3.5 h-3.5 text-cyan-400" />
+          <select
+            aria-label={t('language.label')}
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as 'en' | 'ru')}
+            className="bg-transparent text-gray-300 text-[10px] font-mono focus:outline-none cursor-pointer"
+          >
+            <option value="en" className="bg-[#1e2127]">EN</option>
+            <option value="ru" className="bg-[#1e2127]">RU</option>
+          </select>
+        </div>
         {/* Exploded View Slider */}
         <div className="hidden xl:flex items-center space-x-1.5 bg-[#1e2127] px-2.5 py-1 rounded border border-[#2d313a]">
           <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-          <span className="text-[11px] text-gray-300">Explode:</span>
+          <span className="text-[11px] text-gray-300">{t('toolbar.explode')}</span>
           <input
             id="slider-explode"
             type="range"
@@ -314,7 +329,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
           {isAnalyzing && (
             <div className="flex items-center space-x-1 px-2 py-0.5 rounded bg-blue-950/60 border border-blue-800 text-blue-400 text-[10px] animate-pulse">
               <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping" />
-              <span>Analyzing</span>
+              <span>{t('toolbar.analyzing')}</span>
             </div>
           )}
 

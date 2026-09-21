@@ -34,6 +34,7 @@ import type {
   TextureInfo,
 } from '../types';
 import { DIAGNOSTIC_PROFILES } from '../health/DiagnosticProfiles';
+import { useI18n } from '../i18n';
 
 interface InspectorPanelProps {
   summary: AssetSummary | null;
@@ -64,6 +65,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onFocusIssue,
   onSelectMeshByUuid,
 }) => {
+  const { t } = useI18n();
+
   const [activeTab, setActiveTab] = useState<
     'health' | 'summary' | 'materials' | 'skeleton' | 'performance'
   >('health');
@@ -143,7 +146,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           }`}
         >
           <Activity className="w-3.5 h-3.5" />
-          <span>Health</span>
+          <span>{t('inspector.health')}</span>
           {severityCounts.ERROR > 0 && (
             <span className="px-1 py-0.2 rounded-full bg-rose-900/80 text-rose-300 text-[10px] font-mono">
               {severityCounts.ERROR}
@@ -160,7 +163,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           }`}
         >
           <FileText className="w-3.5 h-3.5" />
-          <span>Summary</span>
+          <span>{t('inspector.summary')}</span>
         </button>
 
         <button
@@ -172,7 +175,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           }`}
         >
           <Image className="w-3.5 h-3.5" />
-          <span>Materials</span>
+          <span>{t('inspector.materials')}</span>
         </button>
 
         <button
@@ -184,7 +187,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           }`}
         >
           <Zap className="w-3.5 h-3.5" />
-          <span>Rig</span>
+          <span>{t('inspector.rig')}</span>
         </button>
 
         <button
@@ -310,7 +313,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               }`}
             >
               <span className="text-base font-bold font-mono">{severityCounts.ERROR}</span>
-              <span className="text-[10px] uppercase font-semibold">Errors</span>
+              <span className="text-[10px] uppercase font-semibold">{t('inspector.errors')}</span>
             </button>
 
             <button
@@ -322,7 +325,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               }`}
             >
               <span className="text-base font-bold font-mono">{severityCounts.WARNING}</span>
-              <span className="text-[10px] uppercase font-semibold">Warnings</span>
+              <span className="text-[10px] uppercase font-semibold">{t('inspector.warnings')}</span>
             </button>
 
             <button
@@ -334,7 +337,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               }`}
             >
               <span className="text-base font-bold font-mono">{severityCounts.INFO}</span>
-              <span className="text-[10px] uppercase font-semibold">Info</span>
+              <span className="text-[10px] uppercase font-semibold">{t('inspector.info')}</span>
             </button>
 
             <button
@@ -346,14 +349,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               }`}
             >
               <span className="text-base font-bold font-mono">{severityCounts.OK}</span>
-              <span className="text-[10px] uppercase font-semibold">Passed</span>
+              <span className="text-[10px] uppercase font-semibold">{t('inspector.passed')}</span>
             </button>
           </div>
 
           {/* Diagnostic Issues List */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1">
-              <span>{filteredIssues.length} Diagnostic Rules Evaluated</span>
+              <span>{filteredIssues.length} {t('inspector.diagnosticRules')}</span>
               {(severityFilter !== 'ALL' || categoryFilter !== 'ALL' || layerFilter !== 'ALL') && (
                 <button
                   onClick={() => {
@@ -363,7 +366,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   }}
                   className="text-cyan-400 hover:underline cursor-pointer text-[10px]"
                 >
-                  Clear Filters
+                  {t('inspector.clearFilters')}
                 </button>
               )}
             </div>
@@ -403,7 +406,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                       title="Move viewport camera to affected coordinates"
                     >
                       <Focus className="w-3 h-3" />
-                      <span>Focus</span>
+                      <span>{t('inspector.focus')}</span>
                     </button>
                   )}
                 </div>
@@ -422,7 +425,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   <div className="ml-6 pt-1.5 border-t border-[#262932] space-y-1 text-[10px]">
                     {(issue.meshName || issue.affectedIndices?.length) && (
                       <div>
-                        <span className="text-gray-500">Location:</span>{' '}
+                        <span className="text-gray-500">{t('inspector.location')}:</span>{' '}
                         <span className="text-cyan-200">
                           {issue.meshName ?? 'Affected mesh'}
                           {issue.affectedElement ? ` · ${issue.affectedElement}` : ''}
@@ -433,17 +436,17 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                       </div>
                     )}
                     {issue.evidence && (
-                      <div><span className="text-gray-500">Evidence:</span> <span className="text-gray-300">{issue.evidence}</span></div>
+                      <div><span className="text-gray-500">{t('inspector.evidence')}:</span> <span className="text-gray-300">{issue.evidence}</span></div>
                     )}
                     {issue.whyItMatters && issue.whyItMatters !== issue.description && (
-                      <div><span className="text-gray-500">Why:</span> <span className="text-gray-300">{issue.whyItMatters}</span></div>
+                      <div><span className="text-gray-500">{t('inspector.why')}:</span> <span className="text-gray-300">{issue.whyItMatters}</span></div>
                     )}
                     {issue.suggestedAction && (
-                      <div><span className="text-gray-500">Next:</span> <span className="text-gray-300">{issue.suggestedAction}</span></div>
+                      <div><span className="text-gray-500">{t('inspector.next')}:</span> <span className="text-gray-300">{issue.suggestedAction}</span></div>
                     )}
                     {issue.repairability && issue.repairability !== 'NONE' && (
                       <span className="inline-block mt-1 px-1.5 py-0.5 rounded bg-[#15171c] border border-[#343845] text-amber-300 font-mono uppercase">
-                        Repair: {issue.repairability}
+                        {t('inspector.repair')}: {issue.repairability}
                       </span>
                     )}
                   </div>
