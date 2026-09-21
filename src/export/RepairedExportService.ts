@@ -9,7 +9,6 @@ import type {
   ExportVerificationReport,
   HealOperationReport,
 } from '../types';
-import { getRepairOperation } from '../heal/framework/RepairRegistry';
 import { copyGeometryData } from '../heal/GeometryRemap';
 import { measureGeometryNormals } from '../analysis/NormalsMeasure';
 import { measureSkinWeights } from '../analysis/SkinWeightMeasure';
@@ -24,7 +23,8 @@ export interface RepairedExportRequest {
   source: ExportSourceDescriptor;
   currentRoot: THREE.Group;
   assetName: string;
-  healReport: HealOperationReport;
+  /** Active verified repair session. The last report is the most recent transaction. */
+  healReports: HealOperationReport[];
 }
 
 export interface RepairedExportResult {
@@ -40,39 +40,58 @@ interface FreshAsset {
 
 export class RepairedExportService {
   public async exportAndVerify(request: RepairedExportRequest): Promise<RepairedExportResult> {
-    const { currentRoot, healReport, assetName } = request;
-    if (healReport.assetName !== assetName || healReport.undoneAt) {
-      throw new Error('export.errors.reportAssetMismatch');
-    }
-    if (healReport.status !== 'VERIFIED' || healReport.pipeline !== 'complete' || !healReport.after) {
+    const { currentRoot, healReports, assetName } = request;
+    if (healReports.length === 0) {
       throw new Error('export.errors.healNotVerified');
     }
 
+    for (const report of healReports) {
+      if (report.assetName !== assetName || report.undoneAt) {
+        throw new Error('export.errors.reportAssetMismatch');
+      }
+      if (report.status !== 'VERIFIED' || report.pipeline !== 'complete' || !report.after) {
+        throw new Error('export.errors.healNotVerified');
+      }
+    }
+
     const currentMeshes = this.collectMeshes(currentRoot);
-    const targetOrdinal = currentMeshes.findIndex((mesh) => mesh.uuid === healReport.meshUuid);
+    const latestReport = healReports[healReports.length - 1];
+    const targetOrdinal = currentMeshes.findIndex((mesh) => mesh.uuid === latestReport.meshUuid);
     if (targetOrdinal < 0) {
       throw new Error('export.errors.targetMissing');
     }
 
-    const currentTarget = currentMeshes[targetOrdinal];
-    const currentTargetStats = analyzeMeshTopology(meshTopologyData(currentTarget));
-    const currentTargetNormals = measureGeometryNormals(currentTarget.geometry);
-    const currentTargetSkin = measureSkinWeights(currentTarget);
-    if (
-      currentTargetStats.triangleCount !== healReport.after.triangleCount ||
-      currentTargetStats.vertexCount !== healReport.after.vertexCount ||
-      currentTargetStats.degenerateTriangles !== healReport.after.degenerateTriangles ||
-      currentTargetStats.isolatedVertices !== healReport.after.isolatedVertices ||
-      currentTargetStats.potentialDuplicatePositions !== healReport.after.potentialDuplicatePositions ||
-      (healReport.after.invalidNormals !== undefined &&
-        currentTargetNormals.invalidCount !== healReport.after.invalidNormals) ||
-      (healReport.after.invalidSkinWeights !== undefined &&
-        (!currentTargetSkin.supported ||
-          currentTargetSkin.invalidSumCount !== healReport.after.invalidSkinWeights))
-    ) {
-      throw new Error('export.errors.geometryChanged');
+    const latestByMesh = new Map<string, HealOperationReport>();
+    for (const report of healReports) latestByMesh.set(report.meshUuid, report);
+
+    const repairedOrdinals = new Set<number>();
+    for (const [meshUuid, report] of latestByMesh) {
+      const ordinal = currentMeshes.findIndex((mesh) => mesh.uuid === meshUuid);
+      if (ordinal < 0) throw new Error('export.errors.targetMissing');
+      repairedOrdinals.add(ordinal);
+
+      const mesh = currentMeshes[ordinal];
+      const stats = analyzeMeshTopology(meshTopologyData(mesh));
+      const normals = measureGeometryNormals(mesh.geometry);
+      const skin = measureSkinWeights(mesh);
+      if (
+        !report.after ||
+        stats.triangleCount !== report.after.triangleCount ||
+        stats.vertexCount !== report.after.vertexCount ||
+        stats.degenerateTriangles !== report.after.degenerateTriangles ||
+        stats.isolatedVertices !== report.after.isolatedVertices ||
+        stats.potentialDuplicatePositions !== report.after.potentialDuplicatePositions ||
+        (report.after.invalidNormals !== undefined &&
+          normals.invalidCount !== report.after.invalidNormals) ||
+        (report.after.invalidSkinWeights !== undefined &&
+          (!skin.supported || skin.invalidSumCount !== report.after.invalidSkinWeights))
+      ) {
+        throw new Error('export.errors.geometryChanged');
+      }
     }
 
+    const currentTarget = currentMeshes[targetOrdinal];
+    const currentTargetNormals = measureGeometryNormals(currentTarget.geometry);
     const fresh = await this.createFreshAsset(request.source);
     let reopened: FreshAsset | null = null;
 
@@ -82,18 +101,25 @@ export class RepairedExportService {
         throw new Error('export.errors.structureMismatch');
       }
 
-      const operation = getRepairOperation(healReport.operation);
-      if (!operation) {
-        throw new Error('export.errors.unsupportedRepair');
+      // Match repaired meshes to the pristine source by stable traversal ordinal
+      // and identity fields. UUIDs are regenerated when the GLB is reopened.
+      for (let i = 0; i < currentMeshes.length; i++) {
+        if (
+          currentMeshes[i].name !== freshMeshes[i].name ||
+          Boolean((currentMeshes[i] as THREE.SkinnedMesh).isSkinnedMesh) !==
+            Boolean((freshMeshes[i] as THREE.SkinnedMesh).isSkinnedMesh)
+        ) {
+          throw new Error('export.errors.structureMismatch');
+        }
       }
-      this.applyRepairPatch(
-        currentMeshes[targetOrdinal],
-        freshMeshes[targetOrdinal],
-        operation.capabilities.exportPatch
-      );
 
-      // Expected structural values come from the pristine source, not the viewport.
-      // Only triangle indices are allowed to differ.
+      // A repair session may contain multiple operations and multiple meshes.
+      // Copy only geometry data into a clean source asset. Materials, transforms,
+      // current animation pose and viewport state remain pristine.
+      for (const ordinal of repairedOrdinals) {
+        this.applyRepairPatch(currentMeshes[ordinal], freshMeshes[ordinal], 'geometry');
+      }
+
       const pristineSummary = analyzeGeometry(fresh.root, assetName);
       const currentSummary = analyzeGeometry(currentRoot, assetName);
       const exportedName = this.makeExportName(assetName);
@@ -144,6 +170,16 @@ export class RepairedExportService {
       if (expectedRigSignature !== actualRigSignature) reasons.push('rigStructure');
       if (expectedAnimationSignature !== actualAnimationSignature) reasons.push('animationStructure');
 
+      for (const ordinal of repairedOrdinals) {
+        const expectedMesh = currentMeshes[ordinal];
+        const actualMesh = reopenedMeshes[ordinal];
+        if (!actualMesh ||
+            this.repairGeometrySignature(expectedMesh) !== this.repairGeometrySignature(actualMesh)) {
+          reasons.push('repairedGeometry');
+          break;
+        }
+      }
+
       let targetTrianglesActual = -1;
       let targetDegeneratesActual = -1;
       let targetVerticesActual = -1;
@@ -165,20 +201,20 @@ export class RepairedExportService {
       }
 
       if (actualSummary.triangleCount !== currentSummary.triangleCount) reasons.push('triangleCount');
-      if (targetTrianglesActual !== healReport.after.triangleCount) reasons.push('targetTriangles');
-      if (targetDegeneratesActual !== healReport.after.degenerateTriangles) reasons.push('targetDegenerates');
-      if (targetVerticesActual !== healReport.after.vertexCount) reasons.push('targetVertices');
-      if (targetUnreferencedActual !== healReport.after.isolatedVertices) reasons.push('targetUnreferenced');
+      if (targetTrianglesActual !== latestReport.after!.triangleCount) reasons.push('targetTriangles');
+      if (targetDegeneratesActual !== latestReport.after!.degenerateTriangles) reasons.push('targetDegenerates');
+      if (targetVerticesActual !== latestReport.after!.vertexCount) reasons.push('targetVertices');
+      if (targetUnreferencedActual !== latestReport.after!.isolatedVertices) reasons.push('targetUnreferenced');
       if (
-        healReport.after.invalidNormals !== undefined &&
-        targetInvalidNormalsActual !== healReport.after.invalidNormals
+        latestReport.after!.invalidNormals !== undefined &&
+        targetInvalidNormalsActual !== latestReport.after!.invalidNormals
       ) reasons.push('targetInvalidNormals');
-      if (targetDuplicatePositionsActual !== healReport.after.potentialDuplicatePositions) {
+      if (targetDuplicatePositionsActual !== latestReport.after!.potentialDuplicatePositions) {
         reasons.push('targetDuplicatePositions');
       }
       if (
-        healReport.after.invalidSkinWeights !== undefined &&
-        targetInvalidSkinWeightsActual !== healReport.after.invalidSkinWeights
+        latestReport.after!.invalidSkinWeights !== undefined &&
+        targetInvalidSkinWeightsActual !== latestReport.after!.invalidSkinWeights
       ) {
         reasons.push('targetInvalidSkinWeights');
       }
@@ -194,25 +230,27 @@ export class RepairedExportService {
         createdAt: new Date().toISOString(),
         assetName,
         exportedName,
-        healOperationId: healReport.operationId,
+        healOperationId: latestReport.operationId,
         status: reasons.length === 0 ? 'VERIFIED' : 'REGRESSION',
         reasons,
         byteLength: output.byteLength,
+        repairCount: healReports.length,
+        repairedMeshCount: repairedOrdinals.size,
         triangleCountExpected: currentSummary.triangleCount,
         triangleCountActual: actualSummary.triangleCount,
-        targetTrianglesExpected: healReport.after.triangleCount,
+        targetTrianglesExpected: latestReport.after!.triangleCount,
         targetTrianglesActual,
-        targetDegeneratesExpected: healReport.after.degenerateTriangles,
+        targetDegeneratesExpected: latestReport.after!.degenerateTriangles,
         targetDegeneratesActual,
-        targetVerticesExpected: healReport.after.vertexCount,
+        targetVerticesExpected: latestReport.after!.vertexCount,
         targetVerticesActual,
-        targetUnreferencedExpected: healReport.after.isolatedVertices,
+        targetUnreferencedExpected: latestReport.after!.isolatedVertices,
         targetUnreferencedActual,
-        targetInvalidNormalsExpected: healReport.after.invalidNormals ?? currentTargetNormals.invalidCount,
+        targetInvalidNormalsExpected: latestReport.after!.invalidNormals ?? currentTargetNormals.invalidCount,
         targetInvalidNormalsActual,
-        targetDuplicatePositionsExpected: healReport.after.potentialDuplicatePositions,
+        targetDuplicatePositionsExpected: latestReport.after!.potentialDuplicatePositions,
         targetDuplicatePositionsActual,
-        targetInvalidSkinWeightsExpected: healReport.after.invalidSkinWeights ?? 0,
+        targetInvalidSkinWeightsExpected: latestReport.after!.invalidSkinWeights ?? 0,
         targetInvalidSkinWeightsActual,
         meshCountExpected: pristineSummary.meshCount,
         meshCountActual: actualSummary.meshCount,
@@ -362,6 +400,47 @@ export class RepairedExportService {
       duration: Number(clip.duration.toFixed(6)),
       tracks: clip.tracks.length,
     })));
+  }
+
+  private repairGeometrySignature(mesh: THREE.Mesh) {
+    const stats = analyzeMeshTopology(meshTopologyData(mesh));
+    const normals = measureGeometryNormals(mesh.geometry);
+    const skin = measureSkinWeights(mesh);
+    const attributes = Object.entries(mesh.geometry.attributes)
+      .map(([name, attribute]) => [
+        name,
+        attribute.itemSize,
+        attribute.count,
+        attribute.normalized,
+      ])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+
+    const morphAttributes = Object.entries(mesh.geometry.morphAttributes)
+      .map(([name, values]) => [
+        name,
+        values.map((attribute) => [attribute.itemSize, attribute.count, attribute.normalized]),
+      ])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+
+    return JSON.stringify({
+      triangleCount: stats.triangleCount,
+      vertexCount: stats.vertexCount,
+      degenerateTriangles: stats.degenerateTriangles,
+      boundaryEdges: stats.boundaryEdges,
+      nonManifoldEdges: stats.nonManifoldEdges,
+      isolatedVertices: stats.isolatedVertices,
+      componentsCount: stats.componentsCount,
+      thinTriangles: stats.thinTriangles,
+      tinyComponentsCount: stats.tinyComponentsCount,
+      potentialDuplicatePositions: stats.potentialDuplicatePositions,
+      normalCount: normals.normalCount,
+      invalidNormals: normals.invalidCount,
+      missingNormals: normals.missing,
+      invalidSkinWeights: skin.supported ? skin.invalidSumCount : null,
+      zeroWeightVertices: skin.supported ? skin.zeroWeightCount : null,
+      attributes,
+      morphAttributes,
+    });
   }
 
   private makeExportName(assetName: string) {
