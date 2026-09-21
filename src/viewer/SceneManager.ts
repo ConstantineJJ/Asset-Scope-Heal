@@ -483,6 +483,7 @@ export class SceneManager {
     this.activeAnimationAction.timeScale = this.animationSpeed;
     this.activeAnimationAction.play();
     this.isPlayingAnimation = true;
+    this.callbacks.onAnimationTimeUpdate?.(0, clip.duration);
   }
 
   public toggleAnimationPlay(play?: boolean) {
@@ -501,26 +502,42 @@ export class SceneManager {
     if (this.animationMixer) {
       this.animationMixer.setTime(0);
     }
+    const duration = this.activeAnimationAction?.getClip().duration ?? 0;
+    this.callbacks.onAnimationTimeUpdate?.(0, duration);
   }
 
   public seekAnimation(normalizedTime: number) {
     if (!this.activeAnimationAction || !this.animationMixer) return;
     const duration = this.activeAnimationAction.getClip().duration;
-    const targetTime = normalizedTime * duration;
+    const targetTime = THREE.MathUtils.clamp(normalizedTime, 0, 1) * duration;
+
+    // Scrubbing must work identically while playing or paused. Updating the
+    // action's local time and forcing a zero-delta mixer evaluation avoids the
+    // paused-action / global-mixer-time desynchronization that previously made
+    // the range slider snap back after pause/resume.
+    const wasPaused = this.activeAnimationAction.paused;
+    this.activeAnimationAction.paused = false;
     this.activeAnimationAction.time = targetTime;
-    this.animationMixer.setTime(targetTime);
+    this.animationMixer.update(0);
+    this.activeAnimationAction.paused = wasPaused;
+
+    this.callbacks.onAnimationTimeUpdate?.(targetTime, duration);
   }
 
   public stepAnimationFrame(stepSeconds: number = 1 / 30) {
     if (!this.activeAnimationAction || !this.animationMixer) return;
     this.isPlayingAnimation = false;
-    this.activeAnimationAction.paused = true;
     const duration = this.activeAnimationAction.getClip().duration;
     let newTime = this.activeAnimationAction.time + stepSeconds;
     if (newTime > duration) newTime = 0;
     if (newTime < 0) newTime = duration;
+
+    this.activeAnimationAction.paused = false;
     this.activeAnimationAction.time = newTime;
-    this.animationMixer.setTime(newTime);
+    this.animationMixer.update(0);
+    this.activeAnimationAction.paused = true;
+
+    this.callbacks.onAnimationTimeUpdate?.(newTime, duration);
   }
 
   public setAnimationSpeed(speed: number) {
