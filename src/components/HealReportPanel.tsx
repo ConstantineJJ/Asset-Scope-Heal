@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ChevronDown, ChevronUp, Trash2, X } from 'lucide-react';
 import type { ExportVerificationReport, HealOperationReport, HealUndoState } from '../types';
 import { healMetricKeys } from '../heal/HealVerification';
 import { useI18n } from '../i18n';
@@ -12,6 +13,8 @@ interface Props {
   storageFailed: boolean;
   undoState: HealUndoState;
   onUndo: () => void;
+  onDismiss: () => void;
+  onClearHistory: () => void;
   exportReport: ExportVerificationReport | null;
   exportBusy: boolean;
   exportError: string | null;
@@ -28,6 +31,8 @@ export function HealReportPanel({
   storageFailed,
   undoState,
   onUndo,
+  onDismiss,
+  onClearHistory,
   exportReport,
   exportBusy,
   exportError,
@@ -37,7 +42,9 @@ export function HealReportPanel({
 }: Props) {
   const { t } = useI18n();
   const reportRef = useRef<HTMLElement>(null);
+  const [collapsed, setCollapsed] = useState(historical);
   useEffect(() => {
+    setCollapsed(historical);
     if (!historical) reportRef.current?.scrollIntoView({ block: 'nearest' });
   }, [report?.operationId, report?.status, report?.undoneAt, historical]);
   if (!report) return null;
@@ -48,19 +55,61 @@ export function HealReportPanel({
       : report.operation === 'normalize-skin-weights'
         ? [...healMetricKeys, 'invalidSkinWeights', 'zeroWeightVertices']
         : [...healMetricKeys];
+  const regressionDeltas = report.status === 'REGRESSION' && report.after
+    ? reportMetricKeys.flatMap((key) => {
+        const before = report.before[key];
+        const after = report.after?.[key];
+        if (typeof before !== 'number' || typeof after !== 'number' || before === after) return [];
+        const delta = after - before;
+        return [`${t(`heal.metrics.${String(key)}`)} ${delta > 0 ? '+' : ''}${delta}`];
+      })
+    : [];
+
   const color = report.status === 'REGRESSION' ? 'text-rose-300 border-rose-800'
     : report.status === 'VERIFIED' ? 'text-emerald-300 border-emerald-800' : 'text-amber-300 border-amber-800';
   return (
     <section ref={reportRef} aria-label={t('heal.lastOperation')} className={`bg-[#1c1e24] border rounded p-2.5 space-y-2 ${color}`}>
       <div className="flex justify-between gap-2 items-start">
-        <h3 className="text-[11px] font-semibold">{t('heal.lastOperation')}</h3>
-        <strong role="status" className="text-[11px] font-mono">{report.status}</strong>
+        <button
+          onClick={() => setCollapsed((value) => !value)}
+          className="flex items-center gap-1 min-w-0 text-left cursor-pointer"
+          title={collapsed ? t('heal.expand') : t('heal.collapse')}
+        >
+          {collapsed ? <ChevronDown className="w-3.5 h-3.5 shrink-0" /> : <ChevronUp className="w-3.5 h-3.5 shrink-0" />}
+          <h3 className="text-[11px] font-semibold truncate">{t('heal.lastOperation')}</h3>
+        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <strong role="status" className="text-[11px] font-mono">{report.status}</strong>
+          {historical && (
+            <button
+              onClick={onClearHistory}
+              className="p-0.5 text-gray-400 hover:text-rose-300 cursor-pointer"
+              title={t('heal.clearHistory')}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button
+            onClick={onDismiss}
+            className="p-0.5 text-gray-400 hover:text-white cursor-pointer"
+            title={t('heal.dismiss')}
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
+      {!collapsed && (
+        <>
       <div className="text-[10px] text-gray-300 break-words">
         {operation ? t(operation.labelKey) : report.operation} · {report.assetName} · {report.meshName}
       </div>
       <div className="text-[10px] text-gray-400 break-all">{report.appliedAt}</div>
       <p className="text-[11px]">{t(`heal.report.${report.status}`)}</p>
+      {regressionDeltas.length > 0 && (
+        <p className="text-[10px] font-mono text-rose-300">
+          {t('heal.report.regressionSummary')}: {regressionDeltas.join(' · ')}
+        </p>
+      )}
       {historical && <p className="text-[11px] text-amber-300">{t('heal.report.historical')}</p>}
       {report.undoneAt && <p className="text-[11px] text-cyan-300">{t('heal.report.undone')}</p>}
       <p className="text-[10px] text-gray-400">
@@ -224,6 +273,8 @@ export function HealReportPanel({
 
           {exportError && <p role="alert" className="text-[10px] text-rose-300">{exportError}</p>}
         </div>
+      )}
+        </>
       )}
     </section>
   );
