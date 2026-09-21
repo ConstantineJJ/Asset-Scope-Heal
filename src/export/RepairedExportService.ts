@@ -12,6 +12,7 @@ import type {
 import { getRepairOperation } from '../heal/framework/RepairRegistry';
 import { copyGeometryData } from '../heal/GeometryRemap';
 import { measureGeometryNormals } from '../analysis/NormalsMeasure';
+import { measureSkinWeights } from '../analysis/SkinWeightMeasure';
 
 export type ExportSampleId = 'test-patient';
 
@@ -56,6 +57,7 @@ export class RepairedExportService {
     const currentTarget = currentMeshes[targetOrdinal];
     const currentTargetStats = analyzeMeshTopology(meshTopologyData(currentTarget));
     const currentTargetNormals = measureGeometryNormals(currentTarget.geometry);
+    const currentTargetSkin = measureSkinWeights(currentTarget);
     if (
       currentTargetStats.triangleCount !== healReport.after.triangleCount ||
       currentTargetStats.vertexCount !== healReport.after.vertexCount ||
@@ -63,7 +65,10 @@ export class RepairedExportService {
       currentTargetStats.isolatedVertices !== healReport.after.isolatedVertices ||
       currentTargetStats.potentialDuplicatePositions !== healReport.after.potentialDuplicatePositions ||
       (healReport.after.invalidNormals !== undefined &&
-        currentTargetNormals.invalidCount !== healReport.after.invalidNormals)
+        currentTargetNormals.invalidCount !== healReport.after.invalidNormals) ||
+      (healReport.after.invalidSkinWeights !== undefined &&
+        (!currentTargetSkin.supported ||
+          currentTargetSkin.invalidSumCount !== healReport.after.invalidSkinWeights))
     ) {
       throw new Error('export.errors.geometryChanged');
     }
@@ -145,6 +150,7 @@ export class RepairedExportService {
       let targetUnreferencedActual = -1;
       let targetInvalidNormalsActual = -1;
       let targetDuplicatePositionsActual = -1;
+      let targetInvalidSkinWeightsActual = 0;
       if (targetMesh) {
         const targetStats = analyzeMeshTopology(meshTopologyData(targetMesh));
         const targetNormals = measureGeometryNormals(targetMesh.geometry);
@@ -154,6 +160,8 @@ export class RepairedExportService {
         targetUnreferencedActual = targetStats.isolatedVertices;
         targetInvalidNormalsActual = targetNormals.invalidCount;
         targetDuplicatePositionsActual = targetStats.potentialDuplicatePositions;
+        const targetSkin = measureSkinWeights(targetMesh);
+        targetInvalidSkinWeightsActual = targetSkin.supported ? targetSkin.invalidSumCount : 0;
       }
 
       if (actualSummary.triangleCount !== currentSummary.triangleCount) reasons.push('triangleCount');
@@ -167,6 +175,12 @@ export class RepairedExportService {
       ) reasons.push('targetInvalidNormals');
       if (targetDuplicatePositionsActual !== healReport.after.potentialDuplicatePositions) {
         reasons.push('targetDuplicatePositions');
+      }
+      if (
+        healReport.after.invalidSkinWeights !== undefined &&
+        targetInvalidSkinWeightsActual !== healReport.after.invalidSkinWeights
+      ) {
+        reasons.push('targetInvalidSkinWeights');
       }
       if (actualSummary.meshCount !== pristineSummary.meshCount) reasons.push('meshCount');
       if (actualSummary.materialCount !== pristineSummary.materialCount) reasons.push('materialCount');
@@ -198,6 +212,8 @@ export class RepairedExportService {
         targetInvalidNormalsActual,
         targetDuplicatePositionsExpected: healReport.after.potentialDuplicatePositions,
         targetDuplicatePositionsActual,
+        targetInvalidSkinWeightsExpected: healReport.after.invalidSkinWeights ?? 0,
+        targetInvalidSkinWeightsActual,
         meshCountExpected: pristineSummary.meshCount,
         meshCountActual: actualSummary.meshCount,
         materialCountExpected: pristineSummary.materialCount,
