@@ -10,6 +10,7 @@ import {
   planRemoveUnreferencedVertices,
 } from './GeometryRemap';
 import { planRecalculateNormals } from './NormalsRepair';
+import { planNormalizeSkinWeights } from './SkinWeightRepair';
 
 type SupportedIndexArray = Uint8Array | Uint16Array | Uint32Array;
 
@@ -597,6 +598,95 @@ export class SurgicalHealEngine {
     return preview;
   }
 
+  public previewNormalizeSkinWeights(
+    root: THREE.Object3D,
+    meshUuid: string
+  ): HealPreview {
+    this.disposePending();
+
+    const obj = root.getObjectByProperty('uuid', meshUuid);
+    if (
+      !obj ||
+      !(obj as THREE.Mesh).isMesh ||
+      !(obj as THREE.SkinnedMesh).isSkinnedMesh ||
+      (obj as THREE.InstancedMesh).isInstancedMesh
+    ) {
+      return this.blockedWeights(meshUuid, 'Unknown mesh', 'heal.errors.skinWeightsNeedsSkinnedMesh');
+    }
+
+    const mesh = obj as THREE.SkinnedMesh;
+    const geometry = mesh.geometry;
+
+    let sharedUsers = 0;
+    root.traverse((candidate) => {
+      if ((candidate as THREE.Mesh).isMesh && (candidate as THREE.Mesh).geometry === geometry) {
+        sharedUsers++;
+      }
+    });
+    if (sharedUsers !== 1) {
+      return this.blockedWeights(
+        mesh.uuid,
+        mesh.name || `SkinnedMesh_${mesh.id}`,
+        'heal.errors.sharedGeometry'
+      );
+    }
+
+    const planned = planNormalizeSkinWeights(mesh);
+    if ('reasonKey' in planned) {
+      return this.blockedWeights(
+        mesh.uuid,
+        mesh.name || `SkinnedMesh_${mesh.id}`,
+        planned.reasonKey
+      );
+    }
+
+    let before;
+    try {
+      before = analyzeMeshTopology(meshTopologyData(mesh));
+    } catch {
+      planned.replacement.dispose();
+      return this.blockedWeights(
+        mesh.uuid,
+        mesh.name || `SkinnedMesh_${mesh.id}`,
+        'heal.errors.beforeUnavailable'
+      );
+    }
+
+    const preview: HealPreview = {
+      operationId: THREE.MathUtils.generateUUID(),
+      operation: 'normalize-skin-weights',
+      issueId: 'skin-invalid-sum',
+      meshUuid: mesh.uuid,
+      meshName: mesh.name || `SkinnedMesh_${mesh.id}`,
+      status: 'READY',
+      risk: 'CONDITIONAL',
+      trianglesBefore: before.triangleCount,
+      trianglesAfter: before.triangleCount,
+      affectedTriangles: 0,
+      affectedCount: planned.invalidBefore,
+      metric: 'weights',
+      metricBefore: planned.invalidBefore,
+      metricAfter: planned.invalidAfter,
+      verticesBefore: before.vertexCount,
+      verticesAfter: before.vertexCount,
+      affectedVertices: planned.invalidBefore,
+      boundaryEdgesBefore: before.boundaryEdges,
+      boundaryEdgesAfter: before.boundaryEdges,
+      nonManifoldEdgesBefore: before.nonManifoldEdges,
+      nonManifoldEdgesAfter: before.nonManifoldEdges,
+    };
+
+    this.pending = {
+      mutation: 'geometry',
+      preview,
+      geometryUuid: geometry.uuid,
+      replacementGeometry: planned.replacement,
+      snapshot: captureGeometry(geometry),
+    };
+
+    return preview;
+  }
+
   public applyPending(root: THREE.Object3D, assetName = ''): HealApplyResult {
     const pending = this.pending;
     if (!pending) {
@@ -635,7 +725,7 @@ export class SurgicalHealEngine {
 
     let before;
     try {
-      before = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)), geometry);
+      before = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)), geometry, mesh);
     } catch {
       this.disposePending();
       return { success: false, reasonKey: 'heal.errors.beforeUnavailable' };
@@ -675,7 +765,7 @@ export class SurgicalHealEngine {
 
     let after = null;
     try {
-      after = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)), mesh.geometry);
+      after = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)), mesh.geometry, mesh);
     } catch {
       // An unavailable postcheck remains PARTIAL while Undo stays available.
     }
@@ -912,6 +1002,39 @@ export class SurgicalHealEngine {
       affectedTriangles: 0,
       affectedCount: 0,
       metric: 'duplicates',
+      metricBefore: 0,
+      metricAfter: 0,
+      verticesBefore: 0,
+      verticesAfter: 0,
+      affectedVertices: 0,
+      boundaryEdgesBefore: 0,
+      boundaryEdgesAfter: 0,
+      nonManifoldEdgesBefore: 0,
+      nonManifoldEdgesAfter: 0,
+    };
+  }
+
+  private blockedWeights(
+    meshUuid: string,
+    meshName: string,
+    reasonKeyOrReason: string
+  ): HealPreview {
+    const isKey = reasonKeyOrReason.startsWith('heal.');
+    return {
+      operationId: `heal_blocked_weights_${meshUuid}`,
+      operation: 'normalize-skin-weights',
+      issueId: 'skin-invalid-sum',
+      meshUuid,
+      meshName,
+      status: 'BLOCKED',
+      risk: 'CONDITIONAL',
+      reasonKey: isKey ? reasonKeyOrReason : undefined,
+      reason: isKey ? undefined : reasonKeyOrReason,
+      trianglesBefore: 0,
+      trianglesAfter: 0,
+      affectedTriangles: 0,
+      affectedCount: 0,
+      metric: 'weights',
       metricBefore: 0,
       metricAfter: 0,
       verticesBefore: 0,
