@@ -234,7 +234,11 @@ export function createAssetDoctorTestPatient(): SampleAsset {
     const y = rigPositions.getY(i);
     if (y < 0.75) {
       skinIndices.push(0, 1, 0, 0);
-      skinWeights.push(0.85, 0.15, 0, 0);
+      // First two vertices intentionally use non-normalized but non-zero weights
+      // so Normalize Skin Weights has a deterministic safe target.
+      if (i === 0) skinWeights.push(0.60, 0.20, 0, 0);      // sum 0.80
+      else if (i === 1) skinWeights.push(0.90, 0.30, 0, 0); // sum 1.20
+      else skinWeights.push(0.85, 0.15, 0, 0);
     } else {
       skinIndices.push(1, 0, 0, 0);
       skinWeights.push(0.85, 0.15, 0, 0);
