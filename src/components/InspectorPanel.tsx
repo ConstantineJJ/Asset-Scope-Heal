@@ -35,11 +35,13 @@ import type {
   LightingConfig,
   MaterialInfo,
   ProgressiveAnalysisState,
+  RepairQueueRunState,
   SceneNodeInfo,
   TextureInfo,
 } from '../types';
 import { useI18n } from '../i18n';
 import { getRepairOperationForIssue } from '../heal/framework/RepairRegistry';
+import { buildRepairQueueCandidates } from '../heal/RepairQueue';
 import { HealReportPanel } from './HealReportPanel';
 
 interface InspectorPanelProps {
@@ -68,6 +70,10 @@ interface InspectorPanelProps {
   onDismissHealReport: () => void;
   onClearHealHistory: () => void;
   onRescan: () => void;
+  repairQueueState: RepairQueueRunState;
+  onPreviewRepairQueueNext: () => void;
+  onRunRepairQueue: () => void;
+  onStopRepairQueue: () => void;
   exportReport: ExportVerificationReport | null;
   exportBusy: boolean;
   exportError: string | null;
@@ -96,6 +102,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   healPreview,
   healUndoState, healReport, healHistorical, healBusy, healError, healStorageFailed,
   savedHealHistoryAvailable, onShowHealHistory, onDismissHealReport, onClearHealHistory, onRescan,
+  repairQueueState, onPreviewRepairQueueNext, onRunRepairQueue, onStopRepairQueue,
   exportReport, exportBusy, exportError, canExport, onBuildExport, onDownloadExport,
   onPreviewHeal,
   onCancelHealPreview,
@@ -220,44 +227,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     focusIssueLocation(issue, next);
   };
 
-  const repairQueue = (() => {
-    const priority: Record<HealthSeverity, number> = {
-      ERROR: 0,
-      WARNING: 1,
-      INFO: 2,
-      UNKNOWN: 3,
-      'N/A': 4,
-      OK: 5,
-    };
-    const unique = new Map<string, HealthIssue>();
-
-    for (const issue of healthIssues) {
-      const operation = getRepairOperationForIssue(issue);
-      if (!operation || issue.severity === 'OK' || issue.severity === 'N/A') continue;
-
-      const locations = issue.locations?.length ? issue.locations : [null];
-      for (const location of locations) {
-        const candidate: HealthIssue = location
-          ? {
-              ...issue,
-              meshUuid: location.meshUuid,
-              meshName: location.meshName,
-              affectedElement: location.affectedElement,
-              affectedIndices: location.affectedIndices,
-              focusPosition: location.focusPosition,
-            }
-          : issue;
-
-        if (!candidate.meshUuid) continue;
-        const key = `${operation.kind}:${candidate.meshUuid}`;
-        if (!unique.has(key)) unique.set(key, candidate);
-      }
-    }
-
-    return Array.from(unique.values()).sort(
-      (a, b) => priority[a.severity] - priority[b.severity]
-    );
-  })();
+  const repairQueue = buildRepairQueueCandidates(healthIssues);
 
   return (
     <aside className="w-96 bg-[#16181d] border-l border-[#262932] flex flex-col h-full shrink-0 select-none text-xs text-gray-200">
@@ -355,7 +325,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             )}
           </div>
 
-          {repairQueue.length > 0 && (
+          {(repairQueue.length > 0 || repairQueueState.status !== 'idle') && (
             <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5 min-w-0">
@@ -369,19 +339,94 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     </div>
                   </div>
                 </div>
-                <button
-                  disabled={healBusy}
-                  onClick={() => onPreviewHeal(repairQueue[0])}
-                  className="px-2 py-1 rounded border border-cyan-800 bg-cyan-950/30 text-cyan-300 hover:text-white disabled:opacity-40 cursor-pointer text-[10px]"
-                >
-                  {t('heal.queue.previewNext')}
-                </button>
+                <span className={`text-[9px] font-mono uppercase ${
+                  repairQueueState.status === 'regression' || repairQueueState.status === 'failed'
+                    ? 'text-rose-300'
+                    : repairQueueState.status === 'partial' || repairQueueState.status === 'stopped'
+                      ? 'text-amber-300'
+                      : repairQueueState.status === 'completed'
+                        ? 'text-emerald-300'
+                        : 'text-cyan-300'
+                }`}>
+                  {t(`heal.queue.status.${repairQueueState.status}`)}
+                </span>
               </div>
-              <div className="text-[10px] text-gray-400 truncate">
-                {getRepairOperationForIssue(repairQueue[0])
-                  ? t(getRepairOperationForIssue(repairQueue[0])!.labelKey)
-                  : repairQueue[0].title}
-                {repairQueue[0].meshName ? ` · ${repairQueue[0].meshName}` : ''}
+
+              <div className="grid grid-cols-3 gap-1.5 text-[9px] font-mono">
+                <div className="rounded border border-[#2c3039] bg-[#17191e] px-1.5 py-1">
+                  <span className="block text-gray-500">{t('heal.queue.completed')}</span>
+                  <span className="text-emerald-300">{repairQueueState.completed}</span>
+                </div>
+                <div className="rounded border border-[#2c3039] bg-[#17191e] px-1.5 py-1">
+                  <span className="block text-gray-500">{t('heal.queue.skipped')}</span>
+                  <span className="text-amber-300">{repairQueueState.skipped}</span>
+                </div>
+                <div className="rounded border border-[#2c3039] bg-[#17191e] px-1.5 py-1">
+                  <span className="block text-gray-500">{t('heal.queue.remaining')}</span>
+                  <span className="text-cyan-300">{repairQueueState.remaining || repairQueue.length}</span>
+                </div>
+              </div>
+
+              {repairQueueState.currentOperation && (
+                <div className="text-[10px] text-gray-300 break-words">
+                  {t('heal.queue.current')}: {repairQueueState.currentMeshName ?? '—'}
+                </div>
+              )}
+
+              {repairQueueState.stopReason && (
+                <div className={`text-[10px] ${
+                  repairQueueState.status === 'regression' || repairQueueState.status === 'failed'
+                    ? 'text-rose-300'
+                    : 'text-amber-300'
+                }`}>
+                  {repairQueueState.stopReason}
+                </div>
+              )}
+
+              {repairQueue.length > 0 && repairQueueState.status !== 'running' && (
+                <div className="text-[10px] text-gray-400 truncate">
+                  {getRepairOperationForIssue(repairQueue[0].issue)
+                    ? t(getRepairOperationForIssue(repairQueue[0].issue)!.labelKey)
+                    : repairQueue[0].issue.title}
+                  {repairQueue[0].meshName ? ` · ${repairQueue[0].meshName}` : ''}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {repairQueueState.status === 'running' ? (
+                  <button
+                    onClick={onStopRepairQueue}
+                    className="px-2 py-1 rounded border border-amber-800 bg-amber-950/30 text-amber-300 hover:text-white cursor-pointer text-[10px]"
+                  >
+                    {t('heal.queue.stop')}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      disabled={healBusy || repairQueue.length === 0}
+                      onClick={onPreviewRepairQueueNext}
+                      className="px-2 py-1 rounded border border-cyan-800 bg-cyan-950/30 text-cyan-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-[10px]"
+                    >
+                      {t('heal.queue.previewNext')}
+                    </button>
+                    {healPreview?.status === 'READY' && (
+                      <button
+                        disabled={healBusy}
+                        onClick={onApplyHeal}
+                        className="px-2 py-1 rounded border border-emerald-800 bg-emerald-950/30 text-emerald-300 hover:text-white disabled:opacity-40 cursor-pointer text-[10px]"
+                      >
+                        {t('heal.queue.applyNext')}
+                      </button>
+                    )}
+                    <button
+                      disabled={healBusy || repairQueue.length === 0 || progressiveState.topology === 'running'}
+                      onClick={onRunRepairQueue}
+                      className="px-2 py-1 rounded border border-[#46505f] bg-[#242932] text-gray-200 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-[10px]"
+                    >
+                      {t('heal.queue.run')}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           )}
