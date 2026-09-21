@@ -188,9 +188,10 @@ function verifyExactDuplicateMerge(
     reasons.push('unexpectedGeometry');
   }
 
-  // A safe exact merge is only accepted when rendered topology invariants are
-  // unchanged. If connectivity changes, Preview should have blocked it already,
-  // but verification repeats the contract after mutation.
+  // Exact-attribute welding may intentionally reduce boundary edges or connect
+  // components. Verification accepts those improvements, but never a worse
+  // protected topology metric.
+  if (measured.isolatedVertices !== before.isolatedVertices) reasons.push('isolatedVertices');
   for (const key of [
     'degenerateTriangles',
     'boundaryEdges',
@@ -198,13 +199,9 @@ function verifyExactDuplicateMerge(
     'componentsCount',
     'thinTriangles',
     'tinyComponentsCount',
-    'isolatedVertices',
+    'potentialDuplicatePositions',
   ] as const) {
-    if (measured[key] !== before[key]) reasons.push(key);
-  }
-
-  if (measured.potentialDuplicatePositions > before.potentialDuplicatePositions) {
-    reasons.push('potentialDuplicatePositions');
+    if (measured[key] > before[key]) reasons.push(key);
   }
 
   if (reasons.length) return { status: 'REGRESSION', reasons };
