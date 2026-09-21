@@ -29,7 +29,7 @@ export class CameraController {
     const { box, sphere, isValid, warning } = boundsResult;
 
     if (!isValid) {
-      console.warn(`[AssetScope CameraController] Invalid bounds encountered during frameObject: ${warning}. Using safe fallback.`);
+      console.warn(`[AssetDoctor CameraController] Invalid bounds encountered during frameObject: ${warning}. Using safe fallback.`);
     }
 
     // 2. Derive center and model size
@@ -87,7 +87,7 @@ export class CameraController {
       isValid,
     };
 
-    console.log('[AssetScope AutoFrame Diagnostics]', this.lastFramingDiagnostics);
+    console.log('[AssetDoctor AutoFrame Diagnostics]', this.lastFramingDiagnostics);
 
     return boundsResult;
   }
@@ -99,7 +99,7 @@ export class CameraController {
     object.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(object);
     if (box.isEmpty()) {
-      console.warn('[AssetScope FrameRawBounds] Raw box is empty.');
+      console.warn('[AssetDoctor FrameRawBounds] Raw box is empty.');
       return;
     }
 
@@ -122,7 +122,7 @@ export class CameraController {
     this.camera.updateMatrixWorld(true);
     this.controls.update();
 
-    console.log('[AssetScope FrameRawBounds]', {
+    console.log('[AssetDoctor FrameRawBounds]', {
       center: [center.x, center.y, center.z],
       size: [size.x, size.y, size.z],
       camPos: [this.camera.position.x, this.camera.position.y, this.camera.position.z],
@@ -141,7 +141,7 @@ export class CameraController {
     const { box, sphere, isValid, warning } = boundsResult;
 
     if (!isValid) {
-      console.warn(`[AssetScope Focus Diagnostics] Invalid bounds for selected object: ${warning}`);
+      console.warn(`[AssetDoctor Focus Diagnostics] Invalid bounds for selected object: ${warning}`);
     }
 
     // 2. Derive center and model size
@@ -202,7 +202,7 @@ export class CameraController {
       orbitControlsUpdated: true,
     };
 
-    console.log('[AssetScope Focus in Viewport Diagnostics]', focusLog);
+    console.log('[AssetDoctor Focus in Viewport Diagnostics]', focusLog);
   }
 
   public focusPosition(point: [number, number, number], targetDist?: number) {

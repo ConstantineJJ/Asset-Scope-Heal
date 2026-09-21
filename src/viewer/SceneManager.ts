@@ -269,7 +269,7 @@ export class SceneManager {
     });
 
     this.lastMeshDiagnostics = meshDiagnostics;
-    console.log('[AssetScope Loaded Meshes Instrumentation]', meshDiagnostics);
+    console.log('[AssetDoctor Loaded Meshes Instrumentation]', meshDiagnostics);
 
     // 2. Exploded view controller registration
     this.explodedViewController.registerAsset(assetRoot);
@@ -286,7 +286,7 @@ export class SceneManager {
         assetRoot.position.y -= minY;
       }
     } else {
-      console.warn('[AssetScope GroundAlignment] Initial bounds invalid or extreme, skipping ground shift:', initialBounds.warning);
+      console.warn('[AssetDoctor GroundAlignment] Initial bounds invalid or extreme, skipping ground shift:', initialBounds.warning);
     }
 
     // Update matrices again after alignment
@@ -367,7 +367,7 @@ export class SceneManager {
       diagnostics: finalBounds.diagnostics,
     };
 
-    console.log('[AssetScope Whole-Model Inspection]', this.lastWholeModelInspection);
+    console.log('[AssetDoctor Whole-Model Inspection]', this.lastWholeModelInspection);
   }
 
   public playAnimationClip(clipIndex: number) {
@@ -474,7 +474,7 @@ export class SceneManager {
     if (obj) {
       this.cameraController.focusSelectedObject(obj, 1.6);
     } else {
-      console.warn(`[AssetScope Focus] Object with UUID ${this.selectedMeshUuid} not found in scene.`);
+      console.warn(`[AssetDoctor Focus] Object with UUID ${this.selectedMeshUuid} not found in scene.`);
     }
   }
 

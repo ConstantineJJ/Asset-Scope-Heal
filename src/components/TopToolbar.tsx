@@ -95,7 +95,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
             AS
           </div>
           <span className="font-bold tracking-tight text-gray-100 hidden sm:inline text-sm">
-            Asset Scope<span className="text-cyan-400 font-light">&Heal</span>
+            Asset <span className="text-cyan-400 font-light">Doctor</span>
           </span>
         </div>
 

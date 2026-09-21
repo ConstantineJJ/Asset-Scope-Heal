@@ -1,5 +1,5 @@
 {
-  "name": "Asset Scope&Heal",
+  "name": "Asset Doctor",
   "description": "Local-first high-performance 3D asset browser, GLB viewer, and deterministic asset diagnostic tool.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
