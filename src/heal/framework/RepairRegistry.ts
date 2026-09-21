@@ -41,9 +41,50 @@ const removeUnreferencedVertices: RepairOperationDefinition = {
   },
 };
 
+const recalculateNormals: RepairOperationDefinition = {
+  kind: 'recalculate-normals',
+  issueIds: ['normals-missing', 'normals-zero'],
+  risk: 'CONDITIONAL',
+  labelKey: 'repair.operations.recalculateNormals.label',
+  descriptionKey: 'repair.operations.recalculateNormals.description',
+  capabilities: {
+    preview: true,
+    apply: true,
+    undo: true,
+    verify: true,
+    exportPatch: 'geometry',
+  },
+  preview: (engine, root, issue) => {
+    if (!issue.meshUuid) return null;
+    if (issue.id !== 'normals-missing' && issue.id !== 'normals-zero') return null;
+    return engine.previewRecalculateNormals(root, issue.meshUuid, issue.id);
+  },
+};
+
+const mergeExactDuplicateVertices: RepairOperationDefinition = {
+  kind: 'merge-exact-duplicate-vertices',
+  issueIds: ['topo-duplicate-positions'],
+  risk: 'CONDITIONAL',
+  labelKey: 'repair.operations.mergeExactDuplicateVertices.label',
+  descriptionKey: 'repair.operations.mergeExactDuplicateVertices.description',
+  capabilities: {
+    preview: true,
+    apply: true,
+    undo: true,
+    verify: true,
+    exportPatch: 'geometry',
+  },
+  preview: (engine, root, issue) => {
+    if (!issue.meshUuid) return null;
+    return engine.previewMergeExactDuplicateVertices(root, issue.meshUuid);
+  },
+};
+
 const OPERATIONS: readonly RepairOperationDefinition[] = [
   removeDegenerateTriangles,
   removeUnreferencedVertices,
+  recalculateNormals,
+  mergeExactDuplicateVertices,
 ];
 
 const BY_KIND = new Map<HealOperationKind, RepairOperationDefinition>(
