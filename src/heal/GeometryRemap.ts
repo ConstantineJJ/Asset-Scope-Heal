@@ -259,3 +259,193 @@ export function planRemoveUnreferencedVertices(
     verticesAfter: retained.length,
   };
 }
+
+
+export interface ExactDuplicateMergePlan extends VertexRemapPlan {
+  mergedVertices: number;
+}
+
+function validateVertexDomainGeometry(
+  geometry: THREE.BufferGeometry
+): { vertexCount: number; index: THREE.BufferAttribute; morphs: Record<string, Attribute[]> } | VertexRemapBlocked {
+  const position = geometry.getAttribute('position');
+  const index = geometry.index;
+
+  if (!position || !index) {
+    return { reasonKey: 'heal.errors.duplicateNeedsIndexedGeometry' };
+  }
+  if (geometry.userData && Object.keys(geometry.userData).length > 0) {
+    return { reasonKey: 'heal.errors.vertexMetadataUnsupported' };
+  }
+  if (
+    index.itemSize !== 1 ||
+    index.normalized ||
+    index.count === 0 ||
+    index.count % 3 !== 0 ||
+    position.itemSize !== 3 ||
+    position.count === 0
+  ) {
+    return { reasonKey: 'heal.errors.invalidGeometry' };
+  }
+
+  const vertexCount = position.count;
+
+  for (let offset = 0; offset < index.count; offset++) {
+    const value = index.getX(offset);
+    if (!Number.isInteger(value) || value < 0 || value >= vertexCount) {
+      return { reasonKey: 'heal.errors.invalidGeometry' };
+    }
+  }
+
+  for (const attribute of Object.values(geometry.attributes)) {
+    if (!validVertexAttribute(attribute, vertexCount)) {
+      return { reasonKey: 'heal.errors.vertexAttributeUnsupported' };
+    }
+    for (let vertex = 0; vertex < attribute.count; vertex++) {
+      for (let component = 0; component < attribute.itemSize; component++) {
+        if (!Number.isFinite(componentAt(attribute, vertex, component))) {
+          return { reasonKey: 'heal.errors.invalidGeometry' };
+        }
+      }
+    }
+  }
+
+  const morphs = geometry.morphAttributes as Record<string, Attribute[]>;
+  for (const attributes of Object.values(morphs)) {
+    for (const attribute of attributes) {
+      if (!validVertexAttribute(attribute, vertexCount)) {
+        return { reasonKey: 'heal.errors.vertexAttributeUnsupported' };
+      }
+      for (let vertex = 0; vertex < attribute.count; vertex++) {
+        for (let component = 0; component < attribute.itemSize; component++) {
+          if (!Number.isFinite(componentAt(attribute, vertex, component))) {
+            return { reasonKey: 'heal.errors.invalidGeometry' };
+          }
+        }
+      }
+    }
+  }
+
+  return { vertexCount, index, morphs };
+}
+
+function exactVertexKey(
+  geometry: THREE.BufferGeometry,
+  morphs: Record<string, Attribute[]>,
+  vertexIndex: number
+): string {
+  const values: string[] = [];
+  const attributeNames = Object.keys(geometry.attributes).sort();
+
+  for (const name of attributeNames) {
+    const attribute = geometry.attributes[name];
+    values.push(`a:${name}:${attribute.itemSize}:${attribute.normalized ? 1 : 0}`);
+    for (let component = 0; component < attribute.itemSize; component++) {
+      const value = componentAt(attribute, vertexIndex, component);
+      values.push(Object.is(value, -0) ? '0' : String(value));
+    }
+  }
+
+  const morphNames = Object.keys(morphs).sort();
+  for (const name of morphNames) {
+    const attributes = morphs[name];
+    for (let morphIndex = 0; morphIndex < attributes.length; morphIndex++) {
+      const attribute = attributes[morphIndex];
+      values.push(`m:${name}:${morphIndex}:${attribute.itemSize}:${attribute.normalized ? 1 : 0}`);
+      for (let component = 0; component < attribute.itemSize; component++) {
+        const value = componentAt(attribute, vertexIndex, component);
+        values.push(Object.is(value, -0) ? '0' : String(value));
+      }
+    }
+  }
+
+  return values.join('|');
+}
+
+export function planMergeExactDuplicateVertices(
+  geometry: THREE.BufferGeometry
+): ExactDuplicateMergePlan | VertexRemapBlocked {
+  const validated = validateVertexDomainGeometry(geometry);
+  if ('reasonKey' in validated) return validated;
+
+  const { vertexCount, index, morphs } = validated;
+
+  const canonical = new Int32Array(vertexCount);
+  const firstByKey = new Map<string, number>();
+  let mergedVertices = 0;
+
+  for (let vertex = 0; vertex < vertexCount; vertex++) {
+    const key = exactVertexKey(geometry, morphs, vertex);
+    const first = firstByKey.get(key);
+    if (first === undefined) {
+      firstByKey.set(key, vertex);
+      canonical[vertex] = vertex;
+    } else {
+      canonical[vertex] = first;
+      mergedVertices++;
+    }
+  }
+
+  if (mergedVertices === 0) {
+    return { reasonKey: 'heal.errors.noExactDuplicateVertices' };
+  }
+
+  const referencedCanonical = new Set<number>();
+  for (let offset = 0; offset < index.count; offset++) {
+    referencedCanonical.add(canonical[index.getX(offset)]);
+  }
+
+  // Preserve deterministic old-vertex order for all retained canonical vertices.
+  const retained = Array.from(referencedCanonical).sort((a, b) => a - b);
+  const canonicalToNew = new Int32Array(vertexCount);
+  canonicalToNew.fill(-1);
+  retained.forEach((oldIndex, newIndex) => {
+    canonicalToNew[oldIndex] = newIndex;
+  });
+
+  const sourceIndexArray = index.array;
+  const IndexCtor = sourceIndexArray.constructor as new (length: number) => typeof sourceIndexArray;
+  const nextIndexArray = new IndexCtor(index.count);
+
+  for (let offset = 0; offset < index.count; offset++) {
+    const oldIndex = index.getX(offset);
+    const mapped = canonicalToNew[canonical[oldIndex]];
+    if (mapped < 0) return { reasonKey: 'heal.errors.invalidGeometry' };
+    nextIndexArray[offset] = mapped;
+  }
+
+  const replacement = new THREE.BufferGeometry();
+  replacement.name = geometry.name;
+
+  for (const [name, attribute] of Object.entries(geometry.attributes)) {
+    replacement.setAttribute(name, remapAttribute(attribute, retained));
+  }
+
+  const replacementMorphs = replacement.morphAttributes as Record<string, Attribute[]>;
+  for (const [name, attributes] of Object.entries(morphs)) {
+    replacementMorphs[name] = attributes.map((attribute) => remapAttribute(attribute, retained));
+  }
+
+  replacement.morphTargetsRelative = geometry.morphTargetsRelative;
+
+  const nextIndex = new THREE.BufferAttribute(nextIndexArray, 1, index.normalized);
+  nextIndex.setUsage(index.usage);
+  const sourceIndexWithGpuType = index as THREE.BufferAttribute & { gpuType?: number };
+  const nextIndexWithGpuType = nextIndex as THREE.BufferAttribute & { gpuType?: number };
+  if (sourceIndexWithGpuType.gpuType !== undefined) {
+    (nextIndexWithGpuType as any).gpuType = sourceIndexWithGpuType.gpuType;
+  }
+  replacement.setIndex(nextIndex);
+
+  copyGroupsAndRange(geometry, replacement);
+  replacement.computeBoundingBox();
+  replacement.computeBoundingSphere();
+
+  return {
+    replacement,
+    removedVertices: vertexCount - retained.length,
+    mergedVertices,
+    verticesBefore: vertexCount,
+    verticesAfter: retained.length,
+  };
+}
