@@ -1,62 +1,79 @@
 import * as THREE from 'three';
-import type { HealthIssue } from '../types';
+import type { DiagnosticLocation, HealthIssue } from '../types';
+import { measureGeometryNormals, vertexWorldPosition } from './NormalsMeasure';
 
 export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
   const issues: HealthIssue[] = [];
   let missingNormalsCount = 0;
-  let zeroNormalsCount = 0;
+  let invalidNormalsCount = 0;
   let missingUv0Count = 0;
   let hasUv1Count = 0;
-  let meshCount = 0;
+
+  const missingLocations: DiagnosticLocation[] = [];
+  const invalidLocations: DiagnosticLocation[] = [];
+
+  root.updateMatrixWorld(true);
 
   root.traverse((obj) => {
     if (obj.name?.startsWith('__ascope_internal_')) return;
-    if ((obj as THREE.Mesh).isMesh) {
-      meshCount++;
-      const mesh = obj as THREE.Mesh;
-      const geom = mesh.geometry;
-      if (!geom) return;
+    if (!(obj as THREE.Mesh).isMesh) return;
 
-      const normAttr = geom.attributes.normal;
-      if (!normAttr) {
-        missingNormalsCount++;
-      } else {
-        // Sample test for zero normals
-        const count = Math.min(normAttr.count, 500);
-        for (let i = 0; i < count; i++) {
-          const nx = normAttr.getX(i);
-          const ny = normAttr.getY(i);
-          const nz = normAttr.getZ(i);
-          const lenSq = nx * nx + ny * ny + nz * nz;
-          if (lenSq < 0.0001) {
-            zeroNormalsCount++;
-            break;
-          }
-        }
-      }
+    const mesh = obj as THREE.Mesh;
+    const geom = mesh.geometry;
+    if (!geom) return;
 
-      const uvAttr = geom.attributes.uv;
-      if (!uvAttr) {
-        missingUv0Count++;
-      }
+    const measurement = measureGeometryNormals(geom);
 
-      const uv1Attr = geom.attributes.uv1 || geom.attributes.uv2;
-      if (uv1Attr) {
-        hasUv1Count++;
-      }
+    if (measurement.missing) {
+      missingNormalsCount++;
+      missingLocations.push({
+        meshUuid: mesh.uuid,
+        meshName: mesh.name || `Mesh_${mesh.id}`,
+        affectedElement: 'vertex',
+        affectedIndices: measurement.sampleIndices,
+        focusPosition: vertexWorldPosition(mesh, measurement.sampleIndices[0] ?? 0),
+      });
+    } else if (measurement.invalidCount > 0 || measurement.malformed) {
+      invalidNormalsCount += Math.max(measurement.invalidCount, 1);
+      invalidLocations.push({
+        meshUuid: mesh.uuid,
+        meshName: mesh.name || `Mesh_${mesh.id}`,
+        affectedElement: 'vertex',
+        affectedIndices: measurement.sampleIndices,
+        focusPosition: vertexWorldPosition(mesh, measurement.sampleIndices[0] ?? 0),
+      });
     }
+
+    const uvAttr = geom.attributes.uv;
+    if (!uvAttr) missingUv0Count++;
+
+    const uv1Attr = geom.attributes.uv1 || geom.attributes.uv2;
+    if (uv1Attr) hasUv1Count++;
   });
 
-  // Normals issues
   if (missingNormalsCount > 0) {
+    const first = missingLocations[0];
     issues.push({
       id: 'normals-missing',
       category: 'Normals',
       severity: 'WARNING',
       layer: 'Health',
       title: 'Missing vertex normals',
-      description: `${missingNormalsCount} mesh(es) lack explicit vertex normal vectors. Flat or computed shading will be required.`,
+      description: `${missingNormalsCount} mesh(es) lack explicit vertex normal vectors. Shading will depend on runtime-generated or fallback normals.`,
       count: missingNormalsCount,
+      repairability: 'CONDITIONAL',
+      evidence: `Meshes without normal attributes: ${missingNormalsCount}`,
+      suggestedAction: 'Preview deterministic normal recalculation for the affected mesh.',
+      ...(first
+        ? {
+            meshUuid: first.meshUuid,
+            meshName: first.meshName,
+            affectedElement: first.affectedElement,
+            affectedIndices: first.affectedIndices,
+            focusPosition: first.focusPosition,
+            locations: missingLocations,
+          }
+        : {}),
     });
   } else {
     issues.push({
@@ -68,19 +85,32 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
     });
   }
 
-  if (zeroNormalsCount > 0) {
+  if (invalidNormalsCount > 0) {
+    const first = invalidLocations[0];
     issues.push({
       id: 'normals-zero',
       category: 'Normals',
       severity: 'WARNING',
       layer: 'Health',
-      title: 'Zero-length normal vectors detected',
-      description: `${zeroNormalsCount} mesh(es) contain zero-length or unnormalized normal attributes, causing black shading artifacts.`,
-      count: zeroNormalsCount,
+      title: 'Invalid normal vectors detected',
+      description: `${invalidNormalsCount} vertex normal(s) are zero-length, non-finite, malformed, or substantially unnormalized. This can cause black, unstable, or inconsistent shading.`,
+      count: invalidNormalsCount,
+      repairability: 'CONDITIONAL',
+      evidence: `Invalid normal vectors: ${invalidNormalsCount}`,
+      suggestedAction: 'Preview deterministic normal recalculation for the affected mesh.',
+      ...(first
+        ? {
+            meshUuid: first.meshUuid,
+            meshName: first.meshName,
+            affectedElement: first.affectedElement,
+            affectedIndices: first.affectedIndices,
+            focusPosition: first.focusPosition,
+            locations: invalidLocations,
+          }
+        : {}),
     });
   }
 
-  // UV issues
   if (missingUv0Count > 0) {
     issues.push({
       id: 'uv-missing-uv0',
