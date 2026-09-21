@@ -7,6 +7,7 @@ export interface LoadedModelResult {
   fileSizeBytes?: number;
   root: THREE.Group;
   animations: THREE.AnimationClip[];
+  sourceBuffer?: ArrayBuffer;
 }
 
 export class GLBLoaderService {
@@ -28,7 +29,8 @@ export class GLBLoaderService {
 
   public async loadFromFile(file: File): Promise<LoadedModelResult> {
     const arrayBuffer = await file.arrayBuffer();
-    return this.loadFromArrayBuffer(arrayBuffer, file.name, file.size);
+    const result = await this.loadFromArrayBuffer(arrayBuffer, file.name, file.size);
+    return { ...result, sourceBuffer: arrayBuffer.slice(0) };
   }
 
   public async loadFromArrayBuffer(
