@@ -4,11 +4,7 @@ import { analyzeGeometry } from '../analysis/GeometryAnalyzer';
 import { analyzeMeshTopology } from '../analysis/TopologyAnalyzer';
 import { meshTopologyData } from '../analysis/MeshTopologyData';
 import { GLBLoaderService } from '../loaders/GLBLoaderService';
-import {
-  createRiggedRobotCharacter,
-  createSampleDrone,
-  createTopologyDiagnosticSpecimen,
-} from '../loaders/SampleModels';
+import { createAssetDoctorTestPatient } from '../loaders/SampleModels';
 import type {
   ExportVerificationReport,
   HealOperationReport,
@@ -16,7 +12,7 @@ import type {
 import { getRepairOperation } from '../heal/framework/RepairRegistry';
 import { copyGeometryData } from '../heal/GeometryRemap';
 
-export type ExportSampleId = 'drone' | 'topo-specimen' | 'rigged-robot';
+export type ExportSampleId = 'test-patient';
 
 export type ExportSourceDescriptor =
   | { kind: 'buffer'; fileName: string; buffer: ArrayBuffer }
@@ -216,11 +212,7 @@ export class RepairedExportService {
 
   private async createFreshAsset(source: ExportSourceDescriptor): Promise<FreshAsset> {
     if (source.kind === 'sample') {
-      const sample = source.sampleId === 'drone'
-        ? createSampleDrone()
-        : source.sampleId === 'topo-specimen'
-          ? createTopologyDiagnosticSpecimen()
-          : createRiggedRobotCharacter();
+      const sample = createAssetDoctorTestPatient();
       return { root: sample.root, animations: sample.animations };
     }
 
