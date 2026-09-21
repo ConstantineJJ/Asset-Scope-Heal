@@ -1,0 +1,195 @@
+import type {
+  AssetSummary,
+  HealthIssue,
+  MaterialInfo,
+  SkinningStats,
+  TextureInfo,
+  TopologyStats,
+} from '../types';
+import { HealthEngine, aggregateTopologyIssues } from '../health/HealthEngine';
+import { analyzePerformance } from './PerformanceAnalyzer';
+
+export interface DiagnosticCoreTestResult {
+  name: string;
+  description: string;
+  expected: string;
+  actual: string;
+  passed: boolean;
+}
+
+function makeSummary(overrides: Partial<AssetSummary> = {}): AssetSummary {
+  return {
+    fileName: 'synthetic.glb',
+    nodeCount: 2,
+    meshCount: 1,
+    primitiveCount: 1,
+    vertexCount: 24,
+    indexedVertexCount: 24,
+    triangleCount: 12,
+    lineCount: 0,
+    pointCount: 0,
+    materialCount: 1,
+    textureCount: 0,
+    skeletonCount: 0,
+    boneCount: 0,
+    skinnedMeshCount: 0,
+    clipCount: 0,
+    clips: [],
+    boundingBox: {
+      min: [-0.5, 0, -0.5],
+      max: [0.5, 1, 0.5],
+      size: [1, 1, 1],
+      center: [0, 0.5, 0],
+      diagonal: Math.sqrt(3),
+    },
+    ...overrides,
+  };
+}
+
+const emptySkeleton: SkinningStats = {
+  skinnedMeshCount: 0,
+  skeletonCount: 0,
+  totalBones: 0,
+  rootBoneNames: [],
+  maxInfluencesPerVertex: 0,
+  zeroWeightVertices: 0,
+  invalidWeightSumVertices: 0,
+  unusedBonesCount: 0,
+  bones: [],
+};
+
+function aggregate(
+  summary: AssetSummary,
+  profileId: Parameters<typeof HealthEngine.aggregate>[0]['profileId'] = 'general',
+  textures: TextureInfo[] = []
+): HealthIssue[] {
+  const performance = analyzePerformance(summary, textures, 0, profileId);
+  return HealthEngine.aggregate({
+    summary,
+    profileId,
+    materials: [] as MaterialInfo[],
+    textures,
+    skeleton: emptySkeleton,
+    animations: [],
+    transforms: [],
+    performance,
+    normalsAndUv: [],
+    topology: [],
+  });
+}
+
+export function runDiagnosticCoreTests(): DiagnosticCoreTestResult[] {
+  const results: DiagnosticCoreTestResult[] = [];
+
+  {
+    const issues = aggregate(makeSummary());
+    const integrity = issues.find((i) => i.id === 'integrity-core-readable');
+    results.push({
+      name: 'Integrity Layer Test',
+      description: 'Valid finite scene metrics must produce a readable Integrity result.',
+      expected: 'OK issue in Integrity layer',
+      actual: integrity ? `${integrity.severity} / ${integrity.layer}` : 'missing',
+      passed: integrity?.severity === 'OK' && integrity.layer === 'Integrity',
+    });
+  }
+
+  {
+    const issues = aggregate(makeSummary());
+    const rig = issues.find((i) => i.id === 'skin-static-ok');
+    results.push({
+      name: 'N/A Semantics Test',
+      description: 'A static asset must not be marked unhealthy merely because it has no rig.',
+      expected: 'Skeleton check = N/A',
+      actual: rig ? `${rig.severity} / ${rig.layer}` : 'missing',
+      passed: rig?.severity === 'N/A' && rig.layer === 'Health',
+    });
+  }
+
+  {
+    const issues = aggregate(makeSummary(), 'mobile-game-character');
+    const rigFitness = issues.find((i) => i.id === 'fitness-rig-expected-missing');
+    const animFitness = issues.find((i) => i.id === 'fitness-animation-expected-missing');
+    results.push({
+      name: 'Profile Expectation Test',
+      description: 'A mobile character profile should reinterpret missing rig/animation as Fitness warnings.',
+      expected: '2 Fitness warnings',
+      actual: `${[rigFitness, animFitness].filter(Boolean).length} matching finding(s)`,
+      passed:
+        rigFitness?.severity === 'WARNING' &&
+        rigFitness.layer === 'Fitness' &&
+        animFitness?.severity === 'WARNING' &&
+        animFitness.layer === 'Fitness',
+    });
+  }
+
+  {
+    const summary = makeSummary({ triangleCount: 120000 });
+    const general = analyzePerformance(summary, [], 0, 'general').issues;
+    const mobile = analyzePerformance(summary, [], 0, 'mobile-game-character').issues;
+    const generalWarn = general.some((i) => i.id === 'perf-triangle-high');
+    const mobileWarn = mobile.some((i) => i.id === 'perf-triangle-high');
+    results.push({
+      name: 'Fitness Threshold Test',
+      description: 'The same raw triangle count must be interpreted differently by different target profiles.',
+      expected: 'General: no warning; Mobile: warning',
+      actual: `General=${generalWarn ? 'warning' : 'ok'}, Mobile=${mobileWarn ? 'warning' : 'ok'}`,
+      passed: !generalWarn && mobileWarn,
+    });
+  }
+
+  {
+    const badTexture: TextureInfo = {
+      uuid: 'bad-texture',
+      name: 'bad',
+      width: 0,
+      height: 2048,
+      format: 'RGBA',
+      colorSpace: 'srgb',
+      uncompressedBytesEstimate: 0,
+      materialsUsed: [],
+    };
+    const issues = aggregate(makeSummary({ textureCount: 1 }), 'general', [badTexture]);
+    const finding = issues.find((i) => i.id === 'tex-invalid-dimensions');
+    results.push({
+      name: 'Invalid Texture Integrity Test',
+      description: 'Non-positive texture dimensions are invalid data, not a target-profile preference.',
+      expected: 'ERROR in Integrity layer',
+      actual: finding ? `${finding.severity} / ${finding.layer}` : 'missing',
+      passed: finding?.severity === 'ERROR' && finding.layer === 'Integrity',
+    });
+  }
+
+  {
+    const topology: TopologyStats[] = [{
+      meshUuid: 'mesh',
+      meshName: 'mesh',
+      degenerateTriangles: 2,
+      degenerateIndices: [0, 1],
+      boundaryEdges: 0,
+      nonManifoldEdges: 1,
+      isolatedVertices: 0,
+      componentsCount: 1,
+      tinyComponentsCount: 0,
+      thinTriangles: 0,
+      potentialDuplicatePositions: 0,
+      minTriangleArea: 0,
+      maxTriangleArea: 1,
+      avgTriangleArea: 0.5,
+      denseTrianglesCount: 0,
+      triangleCount: 12,
+      vertexCount: 24,
+    }];
+    const findings = aggregateTopologyIssues(topology);
+    const degenerate = findings.find((i) => i.id === 'topo-degenerate-triangles');
+    const nonManifold = findings.find((i) => i.id === 'topo-non-manifold-edges');
+    results.push({
+      name: 'Topology Health Classification Test',
+      description: 'Topology anomalies should be Health warnings by default, not structural Integrity errors.',
+      expected: 'Degenerate + non-manifold = WARNING',
+      actual: `${degenerate?.severity ?? 'missing'} / ${nonManifold?.severity ?? 'missing'}`,
+      passed: degenerate?.severity === 'WARNING' && nonManifold?.severity === 'WARNING',
+    });
+  }
+
+  return results;
+}

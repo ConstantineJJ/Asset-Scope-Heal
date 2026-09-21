@@ -57,6 +57,8 @@ export function App() {
   const [textures, setTextures] = useState<TextureInfo[]>([]);
   const [healthIssues, setHealthIssues] = useState<HealthIssue[]>([]);
   const [diagnosticProfileId, setDiagnosticProfileId] = useState<DiagnosticProfileId>('general');
+  const diagnosticProfileIdRef = useRef<DiagnosticProfileId>('general');
+  const analysisRunIdRef = useRef(0);
   const analysisSnapshotRef = useRef<{
     summary: AssetSummary;
     materials: MaterialInfo[];
@@ -215,8 +217,10 @@ export function App() {
     []
   );
 
-  // Profile changes reinterpret Fitness without rerunning expensive topology analysis.
+  // Profile changes reinterpret Fitness without rerunning expensive topology analysis
+  // and without changing the viewport mount callback identity.
   useEffect(() => {
+    diagnosticProfileIdRef.current = diagnosticProfileId;
     rebuildDiagnosticReport(diagnosticProfileId);
   }, [diagnosticProfileId, rebuildDiagnosticReport]);
 
@@ -228,6 +232,8 @@ export function App() {
       assetName: string,
       sizeBytes?: number
     ) => {
+      const runId = ++analysisRunIdRef.current;
+
       setProgressiveState({
         geometry: 'running',
         materials: 'running',
@@ -279,7 +285,7 @@ export function App() {
       }));
 
       // Initial Diagnostic Core calculation (without topology yet).
-      rebuildDiagnosticReport(diagnosticProfileId, []);
+      rebuildDiagnosticReport(diagnosticProfileIdRef.current, []);
 
       // 2. Heavy Topology Analysis in Worker
       if (workerManagerRef.current) {
@@ -288,6 +294,9 @@ export function App() {
             root
           );
 
+          // A slower previous asset must never overwrite diagnostics for a newer load.
+          if (runId !== analysisRunIdRef.current) return;
+
           setProgressiveState((prev) => ({ ...prev, topology: 'done' }));
 
           // Preserve expensive topology results, then reinterpret the full report
@@ -295,11 +304,12 @@ export function App() {
           if (analysisSnapshotRef.current) {
             analysisSnapshotRef.current.topology = topologyResults;
           }
-          rebuildDiagnosticReport(diagnosticProfileId, topologyResults);
+          rebuildDiagnosticReport(diagnosticProfileIdRef.current, topologyResults);
         } catch (err) {
+          if (runId !== analysisRunIdRef.current) return;
           console.warn('Topology worker error:', err);
           setProgressiveState((prev) => ({ ...prev, topology: 'error' }));
-          rebuildDiagnosticReport(diagnosticProfileId);
+          rebuildDiagnosticReport(diagnosticProfileIdRef.current);
           setHealthIssues((prev) => [
             ...prev.filter((issue) => issue.id !== 'topology-analysis-unknown'),
             {
@@ -318,7 +328,7 @@ export function App() {
         }
       }
     },
-    [diagnosticProfileId, rebuildDiagnosticReport]
+    [rebuildDiagnosticReport]
   );
 
   // Load an Asset (from procedural sample or loaded File)

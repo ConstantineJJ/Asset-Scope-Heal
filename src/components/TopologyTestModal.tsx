@@ -4,19 +4,34 @@ import {
   runSyntheticTopologyTests,
   type TopologyTestResult,
 } from '../analysis/SyntheticTopologyTests';
+import {
+  runDiagnosticCoreTests,
+  type DiagnosticCoreTestResult,
+} from '../analysis/DiagnosticCoreTests';
 
 interface TopologyTestModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+type CombinedTestResult = (TopologyTestResult | DiagnosticCoreTestResult) & {
+  suite: 'Topology' | 'Diagnostic Core';
+};
+
+function runAllTests(): CombinedTestResult[] {
+  return [
+    ...runSyntheticTopologyTests().map((result) => ({ ...result, suite: 'Topology' as const })),
+    ...runDiagnosticCoreTests().map((result) => ({ ...result, suite: 'Diagnostic Core' as const })),
+  ];
+}
+
 export const TopologyTestModal: React.FC<TopologyTestModalProps> = ({ isOpen, onClose }) => {
-  const [results, setResults] = useState<TopologyTestResult[]>(() => runSyntheticTopologyTests());
+  const [results, setResults] = useState<CombinedTestResult[]>(() => runAllTests());
 
   if (!isOpen) return null;
 
   const handleRerun = () => {
-    setResults(runSyntheticTopologyTests());
+    setResults(runAllTests());
   };
 
   const allPassed = results.every((r) => r.passed);
@@ -29,7 +44,7 @@ export const TopologyTestModal: React.FC<TopologyTestModalProps> = ({ isOpen, on
           <div className="flex items-center space-x-2">
             <TestTube2 className="w-4 h-4 text-emerald-400" />
             <h3 className="font-bold text-sm text-gray-100">
-              Topology Algorithm Unit Test Suite
+              Asset Doctor Unit Test Suite
             </h3>
           </div>
           <div className="flex items-center space-x-2">
@@ -52,7 +67,7 @@ export const TopologyTestModal: React.FC<TopologyTestModalProps> = ({ isOpen, on
         {/* Modal Status Header */}
         <div className="px-4 py-2.5 bg-[#17191e] border-b border-[#262932] flex items-center justify-between">
           <span className="text-gray-300">
-            Evaluating mathematical topology guarantees across synthetic edge cases
+            Evaluating topology algorithms and Diagnostic Core semantics
           </span>
           <span
             className={`px-2 py-0.5 rounded font-mono font-bold text-[11px] ${
@@ -83,7 +98,16 @@ export const TopologyTestModal: React.FC<TopologyTestModalProps> = ({ isOpen, on
                   ) : (
                     <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
                   )}
-                  <span className="font-semibold text-gray-100">{test.name}</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="font-semibold text-gray-100">{test.name}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono border ${
+                      test.suite === 'Diagnostic Core'
+                        ? 'text-cyan-300 border-cyan-900 bg-cyan-950/40'
+                        : 'text-emerald-300 border-emerald-900 bg-emerald-950/40'
+                    }`}>
+                      {test.suite}
+                    </span>
+                  </div>
                 </div>
                 <span
                   className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
@@ -112,7 +136,7 @@ export const TopologyTestModal: React.FC<TopologyTestModalProps> = ({ isOpen, on
 
         {/* Modal Footer */}
         <div className="px-4 py-3 bg-[#15171c] border-t border-[#262932] flex items-center justify-between text-gray-400 text-[11px]">
-          <span>Synthetic models run in isolated memory without Three.js renderer mutation.</span>
+          <span>Tests run in isolated memory without mutating the active Three.js scene.</span>
           <button
             onClick={onClose}
             className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium cursor-pointer"
