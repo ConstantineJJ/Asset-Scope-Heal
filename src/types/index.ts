@@ -72,6 +72,7 @@ export interface HealthIssue {
   affectedIndices?: number[];
   affectedElement?: 'triangle' | 'edge' | 'vertex' | 'component';
   focusPosition?: [number, number, number];
+  locations?: DiagnosticLocation[];
   technicalDetails?: string;
 }
 
@@ -207,6 +208,14 @@ export interface TopologyLocalizationSample {
   element: 'triangle' | 'edge' | 'vertex' | 'component';
 }
 
+export interface DiagnosticLocation {
+  meshUuid: string;
+  meshName: string;
+  affectedElement: 'triangle' | 'edge' | 'vertex' | 'component';
+  affectedIndices?: number[];
+  focusPosition: [number, number, number];
+}
+
 export interface TopologyStats {
   meshUuid: string;
   meshName: string;
@@ -227,6 +236,7 @@ export interface TopologyStats {
   vertexCount: number;
   sampleFocusPoints?: Array<[number, number, number]>;
   localization?: Partial<Record<TopologyLocalizationKind, TopologyLocalizationSample>>;
+  localizationSamples?: Partial<Record<TopologyLocalizationKind, TopologyLocalizationSample[]>>;
 }
 
 export type RenderMode =
