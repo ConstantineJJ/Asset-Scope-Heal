@@ -10,6 +10,10 @@ export const en = {
   toolbar: {
     openFile: 'Open File',
     openFileTitle: 'Open local .glb or .gltf asset',
+    export: 'Export',
+    exportTitle: 'Build, verify and download the repaired GLB',
+    exportDisabledTitle: 'Export becomes available after the current repair is fully VERIFIED',
+    exporting: 'Exporting…',
     samples: 'Samples',
     builtInModels: 'Built-in Test Models',
     topologyTests: 'Topology Tests',
