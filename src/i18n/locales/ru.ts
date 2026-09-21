@@ -40,6 +40,10 @@ export const ru = {
         label: 'Удалить degenerate triangles',
         description: 'Предпросмотр защищённой index-only починки degenerate triangles.',
       },
+      removeUnreferencedVertices: {
+        label: 'Удалить unreferenced vertices',
+        description: 'Компактировать vertex buffers и удалить вершины, на которые не ссылается index buffer.',
+      },
     },
   },
   heal: {
@@ -49,7 +53,9 @@ export const ru = {
       REGRESSION: 'Пост-проверка обнаружила ухудшение. Проверьте изменения и рассмотрите Undo.',
       historical: 'Сохранённая история. Этот отчёт не подтверждает состояние открытого ассета; данные Undo не восстановлены.',
       undone: 'UNDONE — index buffer восстановлен. Таблица показывает исходный Apply, а не текущее состояние.',
-      scope: 'Область проверки: topology выбранного mesh и изменение только index buffer. Это не проверка исправности всего ассета. Исходный файл не изменён.',
+      scope: 'Область проверки: выбранный mesh. Это не проверка исправности всего ассета. Исходный файл не изменён.',
+      scopeIndex: 'Область проверки: topology выбранного mesh и index-only изменение. Исходный файл не изменён.',
+      scopeGeometry: 'Область проверки: topology и vertex-domain attributes выбранного mesh. Исходный файл не изменён.',
       measured: 'Измерения до / после Apply', metric: 'Метрика', before: 'До', after: 'После', delta: 'Разница', unavailable: 'Н/Д',
       pipeline_pending: 'Полная диагностика: выполняется. Проверка не завершена.',
       pipeline_complete: 'Полная диагностика: завершена.',
