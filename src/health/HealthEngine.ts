@@ -233,6 +233,7 @@ export function evaluateSkinningIssues(
 
   // Zero weight vertices
   if (stats.zeroWeightVertices > 0) {
+    const first = stats.zeroWeightLocations?.[0];
     issues.push({
       id: 'skin-zero-weight',
       category: 'Skinning',
@@ -240,11 +241,23 @@ export function evaluateSkinningIssues(
       title: `Unweighted vertices: ${stats.zeroWeightVertices}`,
       description: `${stats.zeroWeightVertices} vertex/vertices have zero bone weight influence. They will remain frozen in bind pose when playing animations.`,
       count: stats.zeroWeightVertices,
+      repairability: 'MANUAL',
+      ...(first
+        ? {
+            meshUuid: first.meshUuid,
+            meshName: first.meshName,
+            affectedElement: first.affectedElement,
+            affectedIndices: first.affectedIndices,
+            focusPosition: first.focusPosition,
+            locations: stats.zeroWeightLocations,
+          }
+        : {}),
     });
   }
 
   // Invalid weight sum
   if (stats.invalidWeightSumVertices > 0) {
+    const first = stats.invalidWeightLocations?.[0];
     issues.push({
       id: 'skin-invalid-sum',
       category: 'Skinning',
@@ -252,6 +265,18 @@ export function evaluateSkinningIssues(
       title: `Unnormalized bone weights: ${stats.invalidWeightSumVertices}`,
       description: `${stats.invalidWeightSumVertices} vertices have weight sums differing from 1.0 by > 0.05. May cause mesh collapse or volume inflation.`,
       count: stats.invalidWeightSumVertices,
+      repairability: 'CONDITIONAL',
+      suggestedAction: 'Preview normalization of non-zero skin weights. Zero-weight vertices are never guessed automatically.',
+      ...(first
+        ? {
+            meshUuid: first.meshUuid,
+            meshName: first.meshName,
+            affectedElement: first.affectedElement,
+            affectedIndices: first.affectedIndices,
+            focusPosition: first.focusPosition,
+            locations: stats.invalidWeightLocations,
+          }
+        : {}),
     });
   }
 
