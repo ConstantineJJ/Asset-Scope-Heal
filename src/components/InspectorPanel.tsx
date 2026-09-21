@@ -48,6 +48,8 @@ interface InspectorPanelProps {
   lightingConfig: LightingConfig;
   onUpdateLighting: (config: Partial<LightingConfig>) => void;
   onFocusIssue: (issue: HealthIssue) => void;
+  isIssueFocusActive: boolean;
+  onRestoreIssueView: () => void;
   onSelectMeshByUuid: (uuid: string) => void;
 }
 
@@ -63,6 +65,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   lightingConfig,
   onUpdateLighting,
   onFocusIssue,
+  isIssueFocusActive,
+  onRestoreIssueView,
   onSelectMeshByUuid,
 }) => {
   const { t } = useI18n();
@@ -74,6 +78,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   const [severityFilter, setSeverityFilter] = useState<HealthSeverity | 'ALL'>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<HealthCategory | 'ALL'>('ALL');
   const [layerFilter, setLayerFilter] = useState<DiagnosticLayer | 'ALL'>('ALL');
+  const [locationIndexByIssue, setLocationIndexByIssue] = useState<Record<string, number>>({});
 
   const filteredIssues = healthIssues.filter((issue) => {
     if (severityFilter !== 'ALL' && issue.severity !== severityFilter) return false;
@@ -131,6 +136,38 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       case 'UNKNOWN':
         return 'bg-violet-950/60 border-violet-800 text-violet-300';
     }
+  };
+
+  const focusIssueLocation = (issue: HealthIssue, index?: number) => {
+    const locations = issue.locations ?? [];
+    if (locations.length === 0) {
+      onFocusIssue(issue);
+      return;
+    }
+
+    const resolvedIndex = Math.min(
+      Math.max(index ?? locationIndexByIssue[issue.id] ?? 0, 0),
+      locations.length - 1
+    );
+    const location = locations[resolvedIndex];
+
+    setLocationIndexByIssue((prev) => ({ ...prev, [issue.id]: resolvedIndex }));
+    onFocusIssue({
+      ...issue,
+      meshUuid: location.meshUuid,
+      meshName: location.meshName,
+      affectedElement: location.affectedElement,
+      affectedIndices: location.affectedIndices,
+      focusPosition: location.focusPosition,
+    });
+  };
+
+  const moveIssueLocation = (issue: HealthIssue, direction: -1 | 1) => {
+    const locations = issue.locations ?? [];
+    if (locations.length < 2) return;
+    const current = locationIndexByIssue[issue.id] ?? 0;
+    const next = (current + direction + locations.length) % locations.length;
+    focusIssueLocation(issue, next);
   };
 
   return (
@@ -356,7 +393,17 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           {/* Diagnostic Issues List */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1">
-              <span>{filteredIssues.length} {t('inspector.diagnosticRules')}</span>
+              <div className="flex items-center gap-2">
+                <span>{filteredIssues.length} {t('inspector.diagnosticRules')}</span>
+                {isIssueFocusActive && (
+                  <button
+                    onClick={onRestoreIssueView}
+                    className="px-1.5 py-0.5 rounded border border-[#38404c] bg-[#20232a] text-gray-300 hover:text-white hover:border-cyan-700 cursor-pointer"
+                  >
+                    {t('inspector.backToView')}
+                  </button>
+                )}
+              </div>
               {(severityFilter !== 'ALL' || categoryFilter !== 'ALL' || layerFilter !== 'ALL') && (
                 <button
                   onClick={() => {
@@ -401,7 +448,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
                   {(issue.focusPosition || issue.meshUuid) && (
                     <button
-                      onClick={() => onFocusIssue(issue)}
+                      onClick={() => focusIssueLocation(issue)}
                       className="px-2 py-1 rounded bg-[#272b34] hover:bg-[#323642] text-cyan-400 hover:text-cyan-300 font-medium text-[10px] flex items-center space-x-1 cursor-pointer shrink-0"
                       title="Move viewport camera to affected coordinates"
                     >
@@ -433,6 +480,25 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                             ? ` [${issue.affectedIndices.slice(0, 8).join(', ')}${issue.affectedIndices.length > 8 ? ', …' : ''}]`
                             : ''}
                         </span>
+                      </div>
+                    )}
+                    {(issue.locations?.length ?? 0) > 1 && (
+                      <div className="flex items-center gap-1.5 pt-1">
+                        <button
+                          onClick={() => moveIssueLocation(issue, -1)}
+                          className="px-1.5 py-0.5 rounded bg-[#20232a] border border-[#343845] text-gray-300 hover:text-cyan-300 cursor-pointer"
+                        >
+                          ← {t('inspector.previous')}
+                        </button>
+                        <span className="font-mono text-gray-500">
+                          {(locationIndexByIssue[issue.id] ?? 0) + 1}/{issue.locations!.length}
+                        </span>
+                        <button
+                          onClick={() => moveIssueLocation(issue, 1)}
+                          className="px-1.5 py-0.5 rounded bg-[#20232a] border border-[#343845] text-gray-300 hover:text-cyan-300 cursor-pointer"
+                        >
+                          {t('inspector.nextIssue')} →
+                        </button>
                       </div>
                     )}
                     {issue.evidence && (
