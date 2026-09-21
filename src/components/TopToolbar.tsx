@@ -95,7 +95,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
       <div className="flex items-center space-x-2.5">
         <div className="flex items-center space-x-2 pr-3 border-r border-[#2d313a]">
           <div className="w-6 h-6 rounded bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center font-black text-white text-[11px] shadow-sm">
-            AS
+            AD
           </div>
           <span className="font-bold tracking-tight text-gray-100 hidden sm:inline text-sm">
             Asset <span className="text-cyan-400 font-light">Doctor</span>
