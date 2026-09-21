@@ -45,7 +45,9 @@ export function HealReportPanel({
   const reportMetricKeys: Array<keyof typeof report.before> =
     report.operation === 'recalculate-normals'
       ? [...healMetricKeys, 'invalidNormals']
-      : [...healMetricKeys];
+      : report.operation === 'normalize-skin-weights'
+        ? [...healMetricKeys, 'invalidSkinWeights', 'zeroWeightVertices']
+        : [...healMetricKeys];
   const color = report.status === 'REGRESSION' ? 'text-rose-300 border-rose-800'
     : report.status === 'VERIFIED' ? 'text-emerald-300 border-emerald-800' : 'text-amber-300 border-amber-800';
   return (
@@ -167,6 +169,10 @@ export function HealReportPanel({
                 <span>{t('export.metrics.duplicatePositions')}</span>
                 <span className="text-right text-gray-200">
                   {exportReport.targetDuplicatePositionsExpected} → {exportReport.targetDuplicatePositionsActual}
+                </span>
+                <span>{t('export.metrics.invalidSkinWeights')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.targetInvalidSkinWeightsExpected} → {exportReport.targetInvalidSkinWeightsActual}
                 </span>
                 <span>{t('export.metrics.meshes')}</span>
                 <span className="text-right text-gray-200">
