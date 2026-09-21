@@ -89,8 +89,19 @@ export class RenderModeManager {
 
       const orig = this.originalMaterials.get(mesh)!;
 
+      mesh.frustumCulled = false;
+
       if (mode === 'pbr') {
         mesh.material = orig;
+        const origMats = Array.isArray(orig) ? orig : [orig];
+        for (const m of origMats) {
+          if (m) {
+            m.visible = true;
+            m.side = THREE.DoubleSide;
+            if (m.opacity < 0.05) m.opacity = 1.0;
+            m.depthWrite = true;
+          }
+        }
         return;
       }
 
@@ -109,6 +120,7 @@ export class RenderModeManager {
             map: source?.map || null,
             color: source?.color ? source.color.clone() : new THREE.Color(0xffffff),
             wireframe: false,
+            side: THREE.DoubleSide,
           });
           break;
         }
@@ -117,6 +129,7 @@ export class RenderModeManager {
           mesh.material = new THREE.MeshBasicMaterial({
             color: 0x38bdf8,
             wireframe: true,
+            side: THREE.DoubleSide,
           });
           break;
         }
@@ -132,17 +145,20 @@ export class RenderModeManager {
             polygonOffset: true,
             polygonOffsetFactor: -1,
             polygonOffsetUnits: -1,
+            side: THREE.DoubleSide,
           });
           let wireClone: THREE.Mesh;
           if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
             const sm = mesh as THREE.SkinnedMesh;
             const skinnedClone = new THREE.SkinnedMesh(sm.geometry, wireMat);
+            skinnedClone.frustumCulled = false;
             if (sm.skeleton) {
               skinnedClone.bind(sm.skeleton, sm.bindMatrix);
             }
             wireClone = skinnedClone;
           } else {
             wireClone = new THREE.Mesh(mesh.geometry, wireMat);
+            wireClone.frustumCulled = false;
             wireClone.matrixAutoUpdate = false;
             wireClone.matrix.copy(mesh.matrixWorld);
           }
@@ -154,6 +170,7 @@ export class RenderModeManager {
           mesh.material = new THREE.MeshBasicMaterial({
             map: source?.map || null,
             color: source?.color ? source.color.clone() : new THREE.Color(0xd1d5db),
+            side: THREE.DoubleSide,
           });
           break;
         }
@@ -161,6 +178,7 @@ export class RenderModeManager {
         case 'normals': {
           mesh.material = new THREE.MeshNormalMaterial({
             flatShading: false,
+            side: THREE.DoubleSide,
           });
           break;
         }
@@ -170,6 +188,7 @@ export class RenderModeManager {
           mesh.material = new THREE.MeshBasicMaterial({
             color: new THREE.Color(r, r, r),
             map: source?.roughnessMap || null,
+            side: THREE.DoubleSide,
           });
           break;
         }
@@ -179,6 +198,7 @@ export class RenderModeManager {
           mesh.material = new THREE.MeshBasicMaterial({
             color: new THREE.Color(m, m, m),
             map: source?.metalnessMap || null,
+            side: THREE.DoubleSide,
           });
           break;
         }
@@ -187,6 +207,7 @@ export class RenderModeManager {
           mesh.material = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             map: source?.aoMap || null,
+            side: THREE.DoubleSide,
           });
           break;
         }
@@ -196,6 +217,7 @@ export class RenderModeManager {
           mesh.material = new THREE.MeshBasicMaterial({
             color: eColor,
             map: source?.emissiveMap || null,
+            side: THREE.DoubleSide,
           });
           break;
         }
@@ -205,6 +227,7 @@ export class RenderModeManager {
             map: uvTex,
             roughness: 0.4,
             metalness: 0.1,
+            side: THREE.DoubleSide,
           });
           break;
         }
@@ -216,23 +239,27 @@ export class RenderModeManager {
             roughness: 0.3,
             metalness: 0.2,
             flatShading: true,
+            side: THREE.DoubleSide,
           });
           const wireMat = new THREE.MeshBasicMaterial({
             color: 0x10b981,
             wireframe: true,
             transparent: true,
             opacity: 0.6,
+            side: THREE.DoubleSide,
           });
           let wireClone: THREE.Mesh;
           if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
             const sm = mesh as THREE.SkinnedMesh;
             const skinnedClone = new THREE.SkinnedMesh(sm.geometry, wireMat);
+            skinnedClone.frustumCulled = false;
             if (sm.skeleton) {
               skinnedClone.bind(sm.skeleton, sm.bindMatrix);
             }
             wireClone = skinnedClone;
           } else {
             wireClone = new THREE.Mesh(mesh.geometry, wireMat);
+            wireClone.frustumCulled = false;
             wireClone.matrixAutoUpdate = false;
             wireClone.matrix.copy(mesh.matrixWorld);
           }
@@ -244,6 +271,7 @@ export class RenderModeManager {
           // Heatmap: compute vertex colors based on local face density
           mesh.material = new THREE.MeshNormalMaterial({
             wireframe: true,
+            side: THREE.DoubleSide,
           });
           break;
         }

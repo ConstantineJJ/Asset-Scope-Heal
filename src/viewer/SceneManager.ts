@@ -178,27 +178,46 @@ export class SceneManager {
     // Ensure root and children are visible, on default layer, with updated matrices
     assetRoot.visible = true;
     assetRoot.layers.set(0);
+    assetRoot.frustumCulled = false;
     assetRoot.updateMatrixWorld(true);
 
     const meshDiagnostics: Array<Record<string, any>> = [];
 
     // Instrument and verify all loaded meshes & skinned meshes
     assetRoot.traverse((obj) => {
-      // Diagnostic verification: ensure no parent or child is accidentally hidden
+      // Diagnostic verification: ensure no parent or child is accidentally hidden or frustum-culled
       obj.visible = true;
       obj.layers.set(0);
+      obj.frustumCulled = false;
 
       if ((obj as THREE.Mesh).isMesh) {
         const mesh = obj as THREE.Mesh;
+        mesh.frustumCulled = false;
         const isSkinned = (mesh as THREE.SkinnedMesh).isSkinnedMesh;
+
+        // Ensure materials are visible, two-sided, non-zero opacity, and depth-writing
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const m of mats) {
+          if (m) {
+            m.visible = true;
+            m.side = THREE.DoubleSide;
+            if (m.opacity < 0.05) m.opacity = 1.0;
+            m.depthWrite = true;
+          }
+        }
 
         // Ensure skeleton matrices are up-to-date
         if (isSkinned) {
           const sm = mesh as THREE.SkinnedMesh;
+          sm.frustumCulled = false;
           if (sm.skeleton) {
+            if (!sm.skeleton.boneInverses || sm.skeleton.boneInverses.length === 0) {
+              sm.skeleton.calculateInverses();
+            }
+            sm.updateWorldMatrix(true, true);
             for (let i = 0; i < sm.skeleton.bones.length; i++) {
               if (sm.skeleton.bones[i]) {
-                sm.skeleton.bones[i].updateMatrixWorld(true);
+                sm.skeleton.bones[i].updateWorldMatrix(true, false);
               }
             }
             sm.skeleton.update();
@@ -273,11 +292,14 @@ export class SceneManager {
     // Update matrices again after alignment
     assetRoot.updateMatrixWorld(true);
     assetRoot.traverse((obj) => {
+      obj.frustumCulled = false;
       if ((obj as THREE.SkinnedMesh).isSkinnedMesh) {
         const sm = obj as THREE.SkinnedMesh;
+        sm.frustumCulled = false;
         if (sm.skeleton) {
+          sm.updateWorldMatrix(true, true);
           for (let i = 0; i < sm.skeleton.bones.length; i++) {
-            if (sm.skeleton.bones[i]) sm.skeleton.bones[i].updateMatrixWorld(true);
+            if (sm.skeleton.bones[i]) sm.skeleton.bones[i].updateWorldMatrix(true, false);
           }
           sm.skeleton.update();
         }
@@ -292,6 +314,7 @@ export class SceneManager {
       this.bboxHelper = new THREE.Box3Helper(finalBounds.box, new THREE.Color(0xf59e0b));
       this.bboxHelper.name = '__ascope_internal_bbox';
       this.bboxHelper.visible = this.isBboxVisible;
+      this.bboxHelper.frustumCulled = false;
       this.scene.add(this.bboxHelper);
 
       if (this.gridHelper) {
@@ -305,6 +328,7 @@ export class SceneManager {
     this.skeletonHelper = new THREE.SkeletonHelper(assetRoot);
     this.skeletonHelper.name = '__ascope_internal_skeleton';
     this.skeletonHelper.visible = this.isSkeletonVisible;
+    this.skeletonHelper.frustumCulled = false;
     this.scene.add(this.skeletonHelper);
 
     // 5. Animations setup

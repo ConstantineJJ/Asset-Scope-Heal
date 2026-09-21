@@ -38,10 +38,10 @@ export class CameraController {
     box.getCenter(center);
     box.getSize(size);
 
-    const maxDim = Math.max(size.x, Math.max(size.y, size.z), 0.1);
+    const maxDim = Math.max(size.x, Math.max(size.y, size.z), 0.05);
     const fov = this.camera.fov * (Math.PI / 180);
     let cameraDistance = (maxDim / 2) / Math.tan(fov / 2);
-    cameraDistance = Math.max(cameraDistance * offsetFactor, 0.5);
+    cameraDistance = Math.max(cameraDistance * offsetFactor, 0.2);
 
     // 3. Update OrbitControls.target to the new center
     this.controls.target.copy(center);
@@ -51,8 +51,8 @@ export class CameraController {
     this.camera.position.copy(center).add(dir.multiplyScalar(cameraDistance));
 
     // 5. Update near/far clipping planes adaptively
-    this.camera.near = Math.max(0.01, maxDim / 1000);
-    this.camera.far = Math.max(1000, cameraDistance * 30);
+    this.camera.near = Math.max(0.001, maxDim / 2000);
+    this.camera.far = Math.max(5000, cameraDistance * 50);
 
     // 6. Call camera.updateProjectionMatrix()
     this.camera.updateProjectionMatrix();
@@ -108,16 +108,16 @@ export class CameraController {
     box.getCenter(center);
     box.getSize(size);
 
-    const maxDim = Math.max(size.x, Math.max(size.y, size.z), 0.1);
+    const maxDim = Math.max(size.x, Math.max(size.y, size.z), 0.05);
     const fov = this.camera.fov * (Math.PI / 180);
-    const cameraDistance = Math.max(((maxDim / 2) / Math.tan(fov / 2)) * offsetFactor, 0.5);
+    const cameraDistance = Math.max(((maxDim / 2) / Math.tan(fov / 2)) * offsetFactor, 0.2);
 
     this.controls.target.copy(center);
     const dir = new THREE.Vector3(1, 0.75, 1.25).normalize();
     this.camera.position.copy(center).add(dir.multiplyScalar(cameraDistance));
 
-    this.camera.near = Math.max(0.01, maxDim / 1000);
-    this.camera.far = Math.max(1000, cameraDistance * 30);
+    this.camera.near = Math.max(0.001, maxDim / 2000);
+    this.camera.far = Math.max(5000, cameraDistance * 50);
     this.camera.updateProjectionMatrix();
     this.camera.updateMatrixWorld(true);
     this.controls.update();

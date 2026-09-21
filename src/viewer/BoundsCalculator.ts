@@ -111,10 +111,16 @@ export class BoundsCalculator {
       return box;
     }
 
-    // Ensure all bones have up-to-date world matrices and update skeleton
+    // Ensure skeleton bone inverses are computed if missing
+    if (!skeleton.boneInverses || skeleton.boneInverses.length === 0) {
+      skeleton.calculateInverses();
+    }
+
+    // Ensure all bones and mesh have up-to-date world matrices
+    skinnedMesh.updateWorldMatrix(true, true);
     for (let i = 0; i < skeleton.bones.length; i++) {
       if (skeleton.bones[i]) {
-        skeleton.bones[i].updateMatrixWorld(true);
+        skeleton.bones[i].updateWorldMatrix(true, false);
       }
     }
     skeleton.update();
@@ -126,7 +132,7 @@ export class BoundsCalculator {
 
     for (let i = 0; i < skeleton.bones.length; i++) {
       const bone = skeleton.bones[i];
-      const boneInverse = skeleton.boneInverses[i];
+      const boneInverse = skeleton.boneInverses ? skeleton.boneInverses[i] : null;
       const m = new THREE.Matrix4();
       if (bone && boneInverse) {
         m.multiplyMatrices(bone.matrixWorld, boneInverse);
@@ -182,9 +188,11 @@ export class BoundsCalculator {
         totalWeight += w3;
       }
 
-      // If vertex is unweighted or weights don't sum to near 1, fallback to bind matrix
+      // If vertex is unweighted, fallback to bind matrix; otherwise normalize weights
       if (totalWeight < 0.001) {
         vAcc.copy(vLocal).applyMatrix4(skinnedMesh.matrixWorld);
+      } else if (Math.abs(totalWeight - 1.0) > 0.001) {
+        vAcc.divideScalar(totalWeight);
       }
 
       if (!Number.isNaN(vAcc.x) && !Number.isNaN(vAcc.y) && !Number.isNaN(vAcc.z)) {
@@ -192,7 +200,7 @@ export class BoundsCalculator {
       }
     }
 
-    // Also encompass all skeleton bone world positions
+    // Also encompass all skeleton bone world positions so that bones, appendages, and rigs are fully enclosed
     const boneWorldPos = new THREE.Vector3();
     for (let i = 0; i < skeleton.bones.length; i++) {
       if (skeleton.bones[i]) {
@@ -204,9 +212,8 @@ export class BoundsCalculator {
     }
 
     // IMPORTANT: Fix Three.js frustum culling for SkinnedMesh!
-    // In Three.js, frustum culling tests: geometry.boundingSphere * mesh.matrixWorld.
-    // We update geometry.boundingSphere and geometry.boundingBox in mesh local coordinates
-    // so that Three.js frustum culling encompasses the entire skinned range + padding!
+    // In Three.js, skinned meshes must have frustumCulled disabled or safe infinite sphere
+    // to prevent vanishing during skeletal movements and animations!
     this.fixSkinnedMeshFrustumSphere(skinnedMesh, box);
 
     return box;
@@ -215,37 +222,32 @@ export class BoundsCalculator {
   /**
    * Solves the notorious Three.js issue where SkinnedMeshes are culled because
    * geometry.boundingSphere is in unskinned bind-pose.
-   * We calculate the local-space sphere that encloses the skinned world box and set it.
+   * Disables frustum culling on the SkinnedMesh and sets generous bounding spheres.
    */
   public static fixSkinnedMeshFrustumSphere(skinnedMesh: THREE.SkinnedMesh, worldBox: THREE.Box3) {
-    if (worldBox.isEmpty()) return;
+    // Explicitly disable frustum culling on the SkinnedMesh
+    skinnedMesh.frustumCulled = false;
 
-    const centerWorld = new THREE.Vector3();
-    worldBox.getCenter(centerWorld);
-    const sizeWorld = new THREE.Vector3();
-    worldBox.getSize(sizeWorld);
-    const worldRadius = Math.max(0.5, sizeWorld.length() * 0.75); // 50% generous padding for animations
+    // Provide infinite/safe bounding spheres so that sorting or manual checks never cull
+    skinnedMesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), Infinity);
 
-    const geom = skinnedMesh.geometry;
-    if (!geom) return;
+    if (skinnedMesh.geometry) {
+      if (!worldBox.isEmpty()) {
+        const centerWorld = new THREE.Vector3();
+        worldBox.getCenter(centerWorld);
+        const sizeWorld = new THREE.Vector3();
+        worldBox.getSize(sizeWorld);
+        const worldRadius = Math.max(1.0, sizeWorld.length() * 2.0);
 
-    // Convert world center into mesh local space
-    const invMatrix = new THREE.Matrix4().copy(skinnedMesh.matrixWorld).invert();
-    const centerLocal = centerWorld.clone().applyMatrix4(invMatrix);
+        const invMatrix = new THREE.Matrix4().copy(skinnedMesh.matrixWorld).invert();
+        const centerLocal = centerWorld.clone().applyMatrix4(invMatrix);
 
-    // Calculate scale factor from matrix
-    const scale = new THREE.Vector3();
-    skinnedMesh.matrixWorld.decompose(new THREE.Vector3(), new THREE.Quaternion(), scale);
-    const maxScale = Math.max(0.0001, Math.max(scale.x, Math.max(scale.y, scale.z)));
-    const localRadius = worldRadius / maxScale;
-
-    // Set updated bounding sphere on geometry so frustum culling works safely
-    geom.boundingSphere = new THREE.Sphere(centerLocal, localRadius);
-
-    // Also update boundingBox with padding
-    const localBox = worldBox.clone().applyMatrix4(invMatrix);
-    localBox.expandByScalar(localRadius * 0.2);
-    geom.boundingBox = localBox;
+        skinnedMesh.geometry.boundingSphere = new THREE.Sphere(centerLocal, worldRadius * 2.0);
+        skinnedMesh.geometry.boundingBox = worldBox.clone().applyMatrix4(invMatrix).expandByScalar(worldRadius);
+      } else {
+        skinnedMesh.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), Infinity);
+      }
+    }
   }
 
   /**
