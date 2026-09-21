@@ -555,14 +555,24 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                               <div className="grid grid-cols-2 gap-1 text-[10px]">
                                 <div className="p-1 rounded bg-[#121418] border border-[#262932]">
                                   <span className="text-gray-500 block">
-                                    {t(healPreview.metric === 'vertices' ? 'heal.metrics.vertexCount' : 'heal.metrics.triangleCount')}
+                                    {t(
+                                      healPreview.metric === 'vertices'
+                                        ? 'heal.metrics.vertexCount'
+                                        : healPreview.metric === 'normals'
+                                          ? 'heal.metrics.invalidNormals'
+                                          : healPreview.metric === 'duplicates'
+                                            ? 'heal.metrics.potentialDuplicatePositions'
+                                            : 'heal.metrics.triangleCount'
+                                    )}
                                   </span>
                                   <span className="font-mono text-gray-200">
                                     {healPreview.metricBefore} → {healPreview.metricAfter}
                                   </span>
                                 </div>
                                 <div className="p-1 rounded bg-[#121418] border border-[#262932]">
-                                  <span className="text-gray-500 block">{t('heal.remove')}</span>
+                                  <span className="text-gray-500 block">
+                                    {t(healPreview.metric === 'normals' ? 'heal.fix' : 'heal.remove')}
+                                  </span>
                                   <span className="font-mono text-amber-300">
                                     {healPreview.affectedCount}
                                   </span>
