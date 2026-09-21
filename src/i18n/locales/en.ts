@@ -110,6 +110,10 @@ export const en = {
       skinnedMeshCount: 'SkinnedMesh count changed.',
       boneCount: 'Bone count changed.',
       clipCount: 'Animation clip count changed.',
+      meshStructure: 'Mesh names, types, vertex counts or triangle layout changed after serialization.',
+      materialStructure: 'Material structure changed after serialization.',
+      rigStructure: 'Rig / bone structure changed after serialization.',
+      animationStructure: 'Animation names, durations or track counts changed after serialization.',
     },
     errors: {
       unavailable: 'Export is available only for the current, fully VERIFIED Heal result.',
