@@ -242,6 +242,7 @@ export interface TopologyStats {
 export type HealOperationKind = 'remove-degenerate-triangles';
 
 export interface HealPreview {
+  reasonKey?: string;
   operationId: string;
   operation: HealOperationKind;
   issueId: string;
@@ -261,6 +262,8 @@ export interface HealPreview {
 
 export interface HealApplyResult {
   success: boolean;
+  reasonKey?: string;
+  report?: HealOperationReport;
   operation?: HealOperationKind;
   meshUuid?: string;
   meshName?: string;
@@ -268,6 +271,31 @@ export interface HealApplyResult {
   trianglesBefore?: number;
   trianglesAfter?: number;
   reason?: string;
+}
+
+export type HealVerificationStatus = 'VERIFIED' | 'PARTIAL' | 'REGRESSION';
+export type HealMetrics = Pick<TopologyStats,
+  'triangleCount' | 'vertexCount' | 'degenerateTriangles' | 'boundaryEdges' |
+  'nonManifoldEdges' | 'isolatedVertices' | 'componentsCount' | 'thinTriangles' |
+  'tinyComponentsCount' | 'potentialDuplicatePositions'>;
+
+/** Serializable audit evidence, never a persisted undo buffer or proof about a newly loaded asset. */
+export interface HealOperationReport {
+  version: 2;
+  operationId: string;
+  operation: HealOperationKind;
+  assetName: string;
+  meshUuid: string;
+  meshName: string;
+  appliedAt: string;
+  undoneAt?: string;
+  status: HealVerificationStatus;
+  targetStatus: HealVerificationStatus;
+  pipeline: 'pending' | 'complete' | 'failed';
+  expectedRemoved: number;
+  before: HealMetrics;
+  after: HealMetrics | null;
+  reasons: string[];
 }
 
 export interface HealUndoState {

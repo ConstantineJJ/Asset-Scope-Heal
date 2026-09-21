@@ -1,13 +1,17 @@
 import * as THREE from 'three';
-import type { HealApplyResult, HealPreview, HealUndoState } from '../types';
+import type { HealApplyResult, HealOperationReport, HealPreview, HealUndoState } from '../types';
+import { analyzeMeshTopology } from '../analysis/TopologyAnalyzer';
+import { meshTopologyData } from '../analysis/MeshTopologyData';
+import { captureAttribute, captureGeometry, geometryMatches, type GeometrySnapshot } from './GeometrySnapshot';
+import { healMetrics, verifyHeal } from './HealVerification';
 
 type SupportedIndexArray = Uint8Array | Uint16Array | Uint32Array;
 
 interface PendingHeal {
   preview: HealPreview;
   geometryUuid: string;
-  originalIndex: THREE.BufferAttribute;
   replacementIndex: THREE.BufferAttribute;
+  snapshot: GeometrySnapshot;
 }
 
 interface UndoHeal {
@@ -17,10 +21,12 @@ interface UndoHeal {
   geometryUuid: string;
   previousIndex: THREE.BufferAttribute;
   affectedTriangles: number;
+  appliedSnapshot: GeometrySnapshot;
+  report: HealOperationReport;
 }
 
 /**
- * Surgical Heal v0.1
+ * Surgical Heal v0.2: independently measured postconditions and guarded Undo.
  *
  * Intentionally narrow:
  * - in-memory only
@@ -36,10 +42,24 @@ interface UndoHeal {
 export class SurgicalHealEngine {
   private pending: PendingHeal | null = null;
   private undoStack: UndoHeal[] = [];
+  private lastOperation: HealOperationReport | null = null;
+
+  public getLastOperation(): HealOperationReport | null {
+    return this.lastOperation ? structuredClone(this.lastOperation) : null;
+  }
+
+  public completeVerification(operationId: string, pipelineComplete: boolean) {
+    const report = this.lastOperation;
+    if (!report || report.operationId !== operationId || report.undoneAt) return;
+    report.pipeline = pipelineComplete ? 'complete' : 'failed';
+    report.status = report.targetStatus === 'REGRESSION' ? 'REGRESSION'
+      : pipelineComplete ? report.targetStatus : 'PARTIAL';
+  }
 
   public clear() {
     this.pending = null;
     this.undoStack = [];
+    this.lastOperation = null;
   }
 
   public cancelPreview() {
@@ -126,8 +146,18 @@ export class SurgicalHealEngine {
       );
     }
 
-    geometry.computeBoundingBox();
-    const localDiagonal = geometry.boundingBox?.getSize(new THREE.Vector3()).length() ?? 1;
+    if (index.itemSize !== 1 || index.normalized || index.count % 3 !== 0 || position.itemSize !== 3 ||
+        Array.from(index.array).some(value => value >= position.count) ||
+        Array.from({ length: position.count }, (_, i) => [position.getX(i), position.getY(i), position.getZ(i)])
+          .some(point => point.some(value => !Number.isFinite(value)))) {
+      return { ...this.blocked(mesh.uuid, mesh.name, ''), reasonKey: 'heal.errors.invalidGeometry' };
+    }
+
+    // Match the analyzer's base-position domain, including when morph targets extend bounds.
+    const localBox = new THREE.Box3();
+    const point = new THREE.Vector3();
+    for (let i = 0; i < position.count; i++) localBox.expandByPoint(point.fromBufferAttribute(position, i));
+    const localDiagonal = localBox.getSize(point).length();
     const areaEpsilon = Math.max(1e-9, Math.pow(Math.max(localDiagonal, 1e-9) * 1e-6, 2));
 
     const triangleCount = Math.floor(index.count / 3);
@@ -172,7 +202,7 @@ export class SurgicalHealEngine {
     const afterEdges = this.countEdgeState(replacement);
 
     const preview: HealPreview = {
-      operationId: `heal_${mesh.uuid}_${index.count}_${degenerate.size}`,
+      operationId: THREE.MathUtils.generateUUID(),
       operation: 'remove-degenerate-triangles',
       issueId: 'topo-degenerate-triangles',
       meshUuid: mesh.uuid,
@@ -193,15 +223,15 @@ export class SurgicalHealEngine {
       this.pending = {
         preview,
         geometryUuid: geometry.uuid,
-        originalIndex: index.clone(),
         replacementIndex: replacement,
+        snapshot: captureGeometry(geometry),
       };
     }
 
     return preview;
   }
 
-  public applyPending(root: THREE.Object3D): HealApplyResult {
+  public applyPending(root: THREE.Object3D, assetName = ''): HealApplyResult {
     const pending = this.pending;
     if (!pending) {
       return { success: false, reason: 'No Surgical Heal preview is pending.' };
@@ -220,17 +250,49 @@ export class SurgicalHealEngine {
       return { success: false, reason: 'Geometry changed after preview. Preview must be regenerated.' };
     }
 
-    if (geometry.index.count !== pending.originalIndex.count) {
+    if (!geometryMatches(geometry, pending.snapshot)) {
       this.pending = null;
-      return { success: false, reason: 'Index buffer changed after preview. Preview must be regenerated.' };
+      return { success: false, reasonKey: 'heal.errors.stalePreview' };
     }
 
+    // Recheck scene-dependent gates too: a new mesh may now share this geometry.
+    const checked = this.previewRemoveDegenerateTriangles(root, mesh.uuid);
+    this.pending = null;
+    if (checked.status !== 'READY') return { success: false, reason: checked.reason, reasonKey: checked.reasonKey };
+
+    let before;
+    try {
+      before = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)));
+    } catch {
+      return { success: false, reasonKey: 'heal.errors.beforeUnavailable' };
+    }
+
+    const expectedSnapshot = { ...pending.snapshot, entries: [
+      ...pending.snapshot.entries.slice(0, -1), captureAttribute(pending.replacementIndex),
+    ] };
     const previousIndex = geometry.index.clone();
     geometry.setIndex(pending.replacementIndex.clone());
     geometry.index!.needsUpdate = true;
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
 
+    const appliedSnapshot = captureGeometry(geometry);
+    let after = null;
+    try {
+      // Reread the actual mutated geometry. Never reuse the preview's predicted counts.
+      after = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)));
+    } catch { /* An unavailable postcheck must remain PARTIAL, with Undo retained. */ }
+    const verified = verifyHeal(before, after, pending.preview.affectedTriangles,
+      geometryMatches(geometry, expectedSnapshot));
+    const report: HealOperationReport = {
+      version: 2, operationId: pending.preview.operationId, operation: pending.preview.operation,
+      assetName, meshUuid: mesh.uuid, meshName: pending.preview.meshName,
+      appliedAt: new Date().toISOString(), expectedRemoved: pending.preview.affectedTriangles,
+      before, after, targetStatus: verified.status,
+      status: verified.status === 'REGRESSION' ? 'REGRESSION' : 'PARTIAL',
+      pipeline: 'pending', reasons: verified.reasons,
+    };
+    this.lastOperation = report;
     this.undoStack.push({
       operation: pending.preview.operation,
       meshUuid: mesh.uuid,
@@ -238,16 +300,19 @@ export class SurgicalHealEngine {
       geometryUuid: geometry.uuid,
       previousIndex,
       affectedTriangles: pending.preview.affectedTriangles,
+      appliedSnapshot,
+      report,
     });
 
     const result: HealApplyResult = {
       success: true,
+      report: this.getLastOperation()!,
       operation: pending.preview.operation,
       meshUuid: mesh.uuid,
       meshName: pending.preview.meshName,
       affectedTriangles: pending.preview.affectedTriangles,
       trianglesBefore: pending.preview.trianglesBefore,
-      trianglesAfter: pending.preview.trianglesAfter,
+      trianglesAfter: after?.triangleCount,
     };
 
     this.pending = null;
@@ -270,15 +335,27 @@ export class SurgicalHealEngine {
       return { success: false, reason: 'Undo target geometry has changed.' };
     }
 
+    let sharedUsers = 0;
+    root.traverse(candidate => {
+      if ((candidate as THREE.Mesh).isMesh && (candidate as THREE.Mesh).geometry === mesh.geometry) sharedUsers++;
+    });
+    if (sharedUsers !== 1 || !geometryMatches(mesh.geometry, undo.appliedSnapshot)) {
+      return { success: false, reasonKey: 'heal.errors.staleUndo' };
+    }
+
     const trianglesBeforeUndo = Math.floor((mesh.geometry.index?.count ?? 0) / 3);
     mesh.geometry.setIndex(undo.previousIndex.clone());
     mesh.geometry.index!.needsUpdate = true;
     mesh.geometry.computeBoundingBox();
     mesh.geometry.computeBoundingSphere();
     this.undoStack.pop();
+    this.pending = null;
+    undo.report.undoneAt = new Date().toISOString();
+    this.lastOperation = undo.report;
 
     return {
       success: true,
+      report: this.getLastOperation()!,
       operation: undo.operation,
       meshUuid: mesh.uuid,
       meshName: undo.meshName,

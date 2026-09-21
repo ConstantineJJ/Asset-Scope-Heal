@@ -15,6 +15,8 @@ import {
 } from './loaders/SampleModels';
 import { WorkerManager } from './workers/WorkerManager';
 import { HealthEngine } from './health/HealthEngine';
+import { useI18n } from './i18n';
+import { readHealReport, saveHealReport } from './heal/HealReportStorage';
 import { SurgicalHealEngine } from './heal/SurgicalHealEngine';
 import { analyzeGeometry } from './analysis/GeometryAnalyzer';
 import { analyzeMaterials } from './analysis/MaterialAnalyzer';
@@ -29,6 +31,7 @@ import type {
   AssetSummary,
   DiagnosticProfileId,
   HealthIssue,
+  HealOperationReport,
   HealPreview,
   HealUndoState,
   LightingConfig,
@@ -42,6 +45,7 @@ import type {
 } from './types';
 
 export function App() {
+  const { t } = useI18n();
   // Scene & Service instances
   const sceneManagerRef = useRef<SceneManager | null>(null);
   const loaderServiceRef = useRef<GLBLoaderService | null>(null);
@@ -129,6 +133,13 @@ export function App() {
   const [isIssueFocusActive, setIsIssueFocusActive] = useState(false);
   const [healPreview, setHealPreview] = useState<HealPreview | null>(null);
   const [healUndoState, setHealUndoState] = useState<HealUndoState>({ available: false });
+
+  const [healReport, setHealReport] = useState<HealOperationReport | null>(() => readHealReport());
+  const [healHistorical, setHealHistorical] = useState(true);
+  const [healBusy, setHealBusy] = useState(false);
+  const healBusyRef = useRef(false);
+  const [healError, setHealError] = useState<string | null>(null);
+  const [healStorageFailed, setHealStorageFailed] = useState(false);
 
   // Initialize Loader & Worker Services
   useEffect(() => {
@@ -306,7 +317,7 @@ export function App() {
           );
 
           // A slower previous asset must never overwrite diagnostics for a newer load.
-          if (runId !== analysisRunIdRef.current) return;
+          if (runId !== analysisRunIdRef.current) return false;
 
           setProgressiveState((prev) => ({ ...prev, topology: 'done' }));
 
@@ -316,8 +327,9 @@ export function App() {
             analysisSnapshotRef.current.topology = topologyResults;
           }
           rebuildDiagnosticReport(diagnosticProfileIdRef.current, topologyResults);
+          return true;
         } catch (err) {
-          if (runId !== analysisRunIdRef.current) return;
+          if (runId !== analysisRunIdRef.current) return false;
           console.warn('Topology worker error:', err);
           setProgressiveState((prev) => ({ ...prev, topology: 'error' }));
           rebuildDiagnosticReport(diagnosticProfileIdRef.current);
@@ -338,6 +350,7 @@ export function App() {
           ]);
         }
       }
+      return false;
     },
     [rebuildDiagnosticReport]
   );
@@ -354,6 +367,8 @@ export function App() {
       currentAssetRootRef.current = root;
       currentAnimationClipsRef.current = clips;
       healEngineRef.current?.clear();
+      setHealHistorical(true);
+      setHealError(null);
       setHealPreview(null);
       setHealUndoState({ available: false });
       setFileName(assetName);
@@ -572,7 +587,7 @@ export function App() {
     setIsIssueFocusActive(false);
   };
 
-  // Surgical Heal v0.1
+  // Surgical Heal v0.2
   const refreshAfterHeal = async () => {
     const root = currentAssetRootRef.current;
     if (!root) return;
@@ -583,7 +598,7 @@ export function App() {
     setSelectedNode(null);
     setTreeRoot(buildSceneTree(root));
 
-    await runAnalysisPipeline(
+    return await runAnalysisPipeline(
       root,
       currentAnimationClipsRef.current,
       fileName,
@@ -594,7 +609,7 @@ export function App() {
   const handlePreviewHeal = (issue: HealthIssue) => {
     const root = currentAssetRootRef.current;
     const engine = healEngineRef.current;
-    if (!root || !engine || !issue.meshUuid) return;
+    if (!root || !engine || !issue.meshUuid || healBusyRef.current) return;
 
     if (issue.id !== 'topo-degenerate-triangles') {
       return;
@@ -613,38 +628,50 @@ export function App() {
     setHealPreview(null);
   };
 
-  const handleApplyHeal = async () => {
+  const publishHealReport = (engine: SurgicalHealEngine) => {
+    const report = engine.getLastOperation();
+    if (!report) return;
+    setHealReport(report);
+    setHealHistorical(false);
+    setHealStorageFailed(!saveHealReport(report));
+  };
+
+  const performHeal = async (undo: boolean) => {
     const root = currentAssetRootRef.current;
     const engine = healEngineRef.current;
-    if (!root || !engine) return;
-
-    const result = engine.applyPending(root);
-    if (!result.success) {
-      setHealPreview((previous) =>
-        previous
-          ? { ...previous, status: 'BLOCKED', reason: result.reason ?? 'Repair could not be applied.' }
-          : null
-      );
-      return;
+    if (!root || !engine || healBusyRef.current) return;
+    healBusyRef.current = true;
+    setHealBusy(true);
+    setHealError(null);
+    try {
+      const result = undo ? engine.undoLast(root) : engine.applyPending(root, fileName);
+      if (!result.success) {
+        const reason = result.reasonKey ? t(result.reasonKey) : result.reason ?? t('heal.blocked');
+        if (undo) setHealError(reason);
+        else setHealPreview(previous => previous ? { ...previous, status: 'BLOCKED', reason, reasonKey: result.reasonKey } : null);
+        return;
+      }
+      setHealPreview(null);
+      setHealUndoState(engine.getUndoState());
+      publishHealReport(engine);
+      let complete = false;
+      try { complete = (await refreshAfterHeal()) === true; }
+      catch { /* Preserve measured evidence and Undo if the broader pipeline fails. */ }
+      // An old analysis completion must never certify or overwrite a newer asset/report.
+      if (currentAssetRootRef.current !== root) return;
+      if (!undo && result.report) engine.completeVerification(result.report.operationId, complete);
+      if (undo && !complete) setHealError(t('heal.errors.undoAnalysis'));
+      publishHealReport(engine);
+    } catch {
+      if (currentAssetRootRef.current === root) setHealError(t('heal.errors.operationFailed'));
+    } finally {
+      healBusyRef.current = false;
+      setHealBusy(false);
     }
-
-    setHealPreview(null);
-    setHealUndoState(engine.getUndoState());
-    await refreshAfterHeal();
   };
 
-  const handleUndoHeal = async () => {
-    const root = currentAssetRootRef.current;
-    const engine = healEngineRef.current;
-    if (!root || !engine) return;
-
-    const result = engine.undoLast(root);
-    if (!result.success) return;
-
-    setHealPreview(null);
-    setHealUndoState(engine.getUndoState());
-    await refreshAfterHeal();
-  };
+  const handleApplyHeal = () => performHeal(false);
+  const handleUndoHeal = () => performHeal(true);
 
   // Animation Handlers
   const handleSelectClip = (idx: number) => {
@@ -767,6 +794,11 @@ export function App() {
           onRestoreIssueView={handleRestoreIssueView}
           healPreview={healPreview}
           healUndoState={healUndoState}
+          healReport={healReport}
+          healHistorical={healHistorical}
+          healBusy={healBusy}
+          healError={healError}
+          healStorageFailed={healStorageFailed}
           onPreviewHeal={handlePreviewHeal}
           onCancelHealPreview={handleCancelHealPreview}
           onApplyHeal={handleApplyHeal}

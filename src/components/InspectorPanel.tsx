@@ -27,6 +27,7 @@ import type {
   HealthCategory,
   HealthIssue,
   HealthSeverity,
+  HealOperationReport,
   HealPreview,
   HealUndoState,
   LightingConfig,
@@ -37,6 +38,7 @@ import type {
 } from '../types';
 import { DIAGNOSTIC_PROFILES } from '../health/DiagnosticProfiles';
 import { useI18n } from '../i18n';
+import { HealReportPanel } from './HealReportPanel';
 
 interface InspectorPanelProps {
   summary: AssetSummary | null;
@@ -54,6 +56,11 @@ interface InspectorPanelProps {
   onRestoreIssueView: () => void;
   healPreview: HealPreview | null;
   healUndoState: HealUndoState;
+  healReport: HealOperationReport | null;
+  healHistorical: boolean;
+  healBusy: boolean;
+  healError: string | null;
+  healStorageFailed: boolean;
   onPreviewHeal: (issue: HealthIssue) => void;
   onCancelHealPreview: () => void;
   onApplyHeal: () => void;
@@ -76,7 +83,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   isIssueFocusActive,
   onRestoreIssueView,
   healPreview,
-  healUndoState,
+  healUndoState, healReport, healHistorical, healBusy, healError, healStorageFailed,
   onPreviewHeal,
   onCancelHealPreview,
   onApplyHeal,
@@ -325,24 +332,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             )}
           </div>
 
-          {healUndoState.available && (
-            <div className="bg-[#1c1e24] border border-emerald-900/60 rounded p-2.5 flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <div className="text-[10px] uppercase tracking-wider font-semibold text-emerald-400">
-                  {t('heal.lastOperation')}
-                </div>
-                <div className="text-[10px] text-gray-300 truncate">
-                  {t('heal.removedTriangles', { count: healUndoState.affectedTriangles ?? 0 })} · {healUndoState.meshName}
-                </div>
-              </div>
-              <button
-                onClick={onUndoHeal}
-                className="px-2 py-1 rounded bg-[#20282a] border border-emerald-800 text-emerald-300 hover:text-white hover:bg-[#263234] cursor-pointer text-[10px] font-medium shrink-0"
-              >
-                {t('heal.undo')}
-              </button>
-            </div>
-          )}
+          <HealReportPanel report={healReport} historical={healHistorical} busy={healBusy}
+            error={healError} storageFailed={healStorageFailed} undoState={healUndoState} onUndo={onUndoHeal} />
+          {!healReport && healError && <p role="alert" className="text-xs text-rose-300">{healError}</p>}
 
           {/* Progressive Analysis Pipeline Tracker */}
           <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-1.5">
@@ -570,6 +562,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                         </span>
                         {issue.id === 'topo-degenerate-triangles' && issue.meshUuid && (
                           <button
+                            disabled={healBusy}
                             onClick={() => onPreviewHeal(issueAtCurrentLocation(issue))}
                             className="px-1.5 py-0.5 rounded bg-amber-950/40 border border-amber-800 text-amber-300 hover:text-amber-100 hover:bg-amber-950/70 cursor-pointer"
                           >
@@ -627,6 +620,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                               </div>
                               <div className="flex items-center gap-1.5 pt-1">
                                 <button
+                                  disabled={healBusy}
                                   onClick={onApplyHeal}
                                   className="px-2 py-1 rounded bg-amber-700 hover:bg-amber-600 text-white font-medium cursor-pointer"
                                 >
@@ -643,7 +637,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                           ) : (
                             <>
                               <div className="text-[10px] text-rose-300">
-                                {healPreview.reason ?? t('heal.blocked')}
+                                {healPreview.reasonKey ? t(healPreview.reasonKey) : healPreview.reason || t('heal.blocked')}
                               </div>
                               <button
                                 onClick={onCancelHealPreview}

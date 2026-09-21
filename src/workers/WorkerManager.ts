@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { analyzeMeshTopology, type RawMeshData } from '../analysis/TopologyAnalyzer';
 import type { TopologyStats } from '../types';
+import { meshTopologyData } from '../analysis/MeshTopologyData';
 
 export class WorkerManager {
   private worker: Worker | null = null;
@@ -23,11 +24,6 @@ export class WorkerManager {
   ): Promise<TopologyStats[]> {
     const rawMeshes: RawMeshData[] = [];
 
-    const overallBox = new THREE.Box3().setFromObject(root);
-    const overallDiag = overallBox.isEmpty()
-      ? 1
-      : overallBox.getSize(new THREE.Vector3()).length();
-
     root.updateMatrixWorld(true);
 
     root.traverse((obj) => {
@@ -37,26 +33,7 @@ export class WorkerManager {
         const geom = mesh.geometry;
         if (!geom || !geom.attributes.position) return;
 
-        const posAttr = geom.attributes.position;
-        const posArray = new Float32Array(posAttr.array);
-
-        let indexArray: Uint16Array | Uint32Array | null = null;
-        if (geom.index) {
-          if (geom.index.array instanceof Uint32Array) {
-            indexArray = new Uint32Array(geom.index.array);
-          } else {
-            indexArray = new Uint16Array(geom.index.array);
-          }
-        }
-
-        rawMeshes.push({
-          uuid: mesh.uuid,
-          name: mesh.name || `Mesh_${mesh.id}`,
-          positions: posArray,
-          indices: indexArray,
-          boundingBoxDiagonal: overallDiag,
-          worldMatrix: Array.from(mesh.matrixWorld.elements),
-        });
+        rawMeshes.push(meshTopologyData(mesh));
       }
     });
 
@@ -96,10 +73,24 @@ export class WorkerManager {
       if (!this.worker) return reject(new Error('Worker not available'));
 
       const taskId = `task_${Math.random().toString(36).slice(2, 9)}`;
+      const worker = this.worker;
+      const cleanup = () => {
+        clearTimeout(timeout);
+        worker.removeEventListener('message', handler);
+        worker.removeEventListener('error', failed);
+        worker.removeEventListener('messageerror', failed);
+      };
+      const failed = () => {
+        cleanup();
+        this.workerFailed = true;
+        reject(new Error('Topology worker did not complete; retrying locally.'));
+      };
+      // A crashed worker must not leave post-heal verification pending forever.
+      const timeout = setTimeout(failed, 15000);
 
       const handler = (e: MessageEvent) => {
         if (e.data && e.data.taskId === taskId) {
-          this.worker?.removeEventListener('message', handler);
+          cleanup();
           if (e.data.success) {
             resolve(e.data.stats);
           } else {
@@ -108,13 +99,15 @@ export class WorkerManager {
         }
       };
 
-      this.worker.addEventListener('message', handler);
+      worker.addEventListener('message', handler);
+      worker.addEventListener('error', failed);
+      worker.addEventListener('messageerror', failed);
 
       // Pass transferable buffers where feasible
       try {
         this.worker.postMessage({ taskId, meshData });
       } catch (err) {
-        this.worker.removeEventListener('message', handler);
+        cleanup();
         reject(err);
       }
     });

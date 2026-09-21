@@ -2,6 +2,9 @@
 
 Status: implemented on `main`.
 
+Follow-up: [Surgical Heal v0.2](SURGICAL_HEAL_V0_2.md) adds measured postconditions,
+verification statuses, a persistent audit report, and stronger Apply/Undo guards.
+
 ## Goal
 
 Introduce the first complete surgical repair transaction:
