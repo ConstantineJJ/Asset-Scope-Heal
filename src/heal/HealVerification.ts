@@ -1,9 +1,11 @@
+import * as THREE from 'three';
 import type {
   HealMetrics,
   HealOperationKind,
   HealVerificationStatus,
   TopologyStats,
 } from '../types';
+import { measureGeometryNormals } from '../analysis/NormalsMeasure';
 
 export const healMetricKeys = [
   'triangleCount', 'vertexCount', 'degenerateTriangles', 'boundaryEdges',
@@ -11,8 +13,23 @@ export const healMetricKeys = [
   'tinyComponentsCount', 'potentialDuplicatePositions',
 ] as const;
 
-export function healMetrics(stats: TopologyStats): HealMetrics {
-  return Object.fromEntries(healMetricKeys.map(key => [key, stats[key]])) as unknown as HealMetrics;
+export function healMetrics(
+  stats: TopologyStats,
+  geometry?: THREE.BufferGeometry
+): HealMetrics {
+  const base = Object.fromEntries(
+    healMetricKeys.map(key => [key, stats[key]])
+  ) as unknown as HealMetrics;
+
+  if (!geometry) return base;
+
+  const normal = measureGeometryNormals(geometry);
+  return {
+    ...base,
+    normalCount: normal.normalCount,
+    invalidNormals: normal.invalidCount,
+    missingNormals: normal.missing ? normal.vertexCount : 0,
+  };
 }
 
 function measurementFailure(
@@ -58,7 +75,6 @@ function verifyDegenerateRemoval(
   if (measured.triangleCount === 0) reasons.push('emptyMesh');
   if (reasons.length) return { status: 'REGRESSION', reasons };
 
-  // Index-only removal deliberately retains vertex attributes, including newly unreferenced vertices.
   if (measured.isolatedVertices > before.isolatedVertices) reasons.push('retainedVertices');
   if (measured.degenerateTriangles !== 0 || before.degenerateTriangles === 0) {
     return { status: 'PARTIAL', reasons: [...reasons, 'targetRemaining'] };
@@ -84,8 +100,6 @@ function verifyUnreferencedVertexRemoval(
     reasons.push('unexpectedGeometry');
   }
 
-  // Removing vertices that were not referenced by the index must not change
-  // the topology of any rendered triangle.
   for (const key of [
     'degenerateTriangles',
     'boundaryEdges',
@@ -97,8 +111,6 @@ function verifyUnreferencedVertexRemoval(
     if (measured[key] !== before[key]) reasons.push(key);
   }
 
-  // Coincident positions may decrease because an unreferenced duplicate was removed,
-  // but they must never increase as a side effect of compaction.
   if (measured.potentialDuplicatePositions > before.potentialDuplicatePositions) {
     reasons.push('potentialDuplicatePositions');
   }
@@ -113,23 +125,116 @@ function verifyUnreferencedVertexRemoval(
   return { status: 'VERIFIED', reasons: [] };
 }
 
-export function verifyHealOperation(
-  operation: HealOperationKind,
+function verifyNormalRecalculation(
+  before: HealMetrics,
+  after: HealMetrics | null,
+  expectedFixed: number,
+  buffersMatch: boolean
+): { status: HealVerificationStatus; reasons: string[] } {
+  const unavailable = measurementFailure(after, buffersMatch);
+  if (unavailable) return unavailable;
+  const measured = after!;
+
+  const reasons: string[] = [];
+  if (!buffersMatch) reasons.push('unexpectedGeometry');
+
+  // A normals-only repair must leave every topology metric unchanged.
+  for (const key of healMetricKeys) {
+    if (measured[key] !== before[key]) reasons.push(key);
+  }
+
+  if (
+    !Number.isFinite(before.invalidNormals) ||
+    !Number.isFinite(measured.invalidNormals) ||
+    !Number.isFinite(measured.normalCount)
+  ) {
+    return {
+      status: reasons.length ? 'REGRESSION' : 'PARTIAL',
+      reasons: [...reasons, 'measurementUnavailable'],
+    };
+  }
+
+  if ((before.invalidNormals ?? 0) !== expectedFixed) {
+    reasons.push('unexpectedGeometry');
+  }
+
+  if ((measured.normalCount ?? 0) !== measured.vertexCount) {
+    reasons.push('normalCount');
+  }
+
+  if (reasons.length) return { status: 'REGRESSION', reasons };
+
+  if ((measured.invalidNormals ?? 0) !== 0 || (measured.missingNormals ?? 0) !== 0) {
+    return { status: 'PARTIAL', reasons: ['targetRemaining'] };
+  }
+
+  return { status: 'VERIFIED', reasons: [] };
+}
+
+function verifyExactDuplicateMerge(
   before: HealMetrics,
   after: HealMetrics | null,
   expectedRemoved: number,
   buffersMatch: boolean
 ): { status: HealVerificationStatus; reasons: string[] } {
+  const unavailable = measurementFailure(after, buffersMatch);
+  if (unavailable) return unavailable;
+  const measured = after!;
+
+  const reasons: string[] = [];
+  if (!buffersMatch ||
+      before.triangleCount !== measured.triangleCount ||
+      before.vertexCount - measured.vertexCount !== expectedRemoved) {
+    reasons.push('unexpectedGeometry');
+  }
+
+  // A safe exact merge is only accepted when rendered topology invariants are
+  // unchanged. If connectivity changes, Preview should have blocked it already,
+  // but verification repeats the contract after mutation.
+  for (const key of [
+    'degenerateTriangles',
+    'boundaryEdges',
+    'nonManifoldEdges',
+    'componentsCount',
+    'thinTriangles',
+    'tinyComponentsCount',
+    'isolatedVertices',
+  ] as const) {
+    if (measured[key] !== before[key]) reasons.push(key);
+  }
+
+  if (measured.potentialDuplicatePositions > before.potentialDuplicatePositions) {
+    reasons.push('potentialDuplicatePositions');
+  }
+
+  if (reasons.length) return { status: 'REGRESSION', reasons };
+  if (before.potentialDuplicatePositions <= measured.potentialDuplicatePositions) {
+    return { status: 'PARTIAL', reasons: ['targetRemaining'] };
+  }
+
+  return { status: 'VERIFIED', reasons: [] };
+}
+
+export function verifyHealOperation(
+  operation: HealOperationKind,
+  before: HealMetrics,
+  after: HealMetrics | null,
+  expectedAffected: number,
+  buffersMatch: boolean
+): { status: HealVerificationStatus; reasons: string[] } {
   switch (operation) {
     case 'remove-unreferenced-vertices':
-      return verifyUnreferencedVertexRemoval(before, after, expectedRemoved, buffersMatch);
+      return verifyUnreferencedVertexRemoval(before, after, expectedAffected, buffersMatch);
+    case 'recalculate-normals':
+      return verifyNormalRecalculation(before, after, expectedAffected, buffersMatch);
+    case 'merge-exact-duplicate-vertices':
+      return verifyExactDuplicateMerge(before, after, expectedAffected, buffersMatch);
     case 'remove-degenerate-triangles':
     default:
-      return verifyDegenerateRemoval(before, after, expectedRemoved, buffersMatch);
+      return verifyDegenerateRemoval(before, after, expectedAffected, buffersMatch);
   }
 }
 
-/** Backward-compatible helper used by existing tests for the original operation. */
 export function verifyHeal(
   before: HealMetrics,
   after: HealMetrics | null,
