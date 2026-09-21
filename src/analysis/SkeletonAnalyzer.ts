@@ -12,6 +12,8 @@ export interface SkinningStats {
   invalidWeightSumVertices: number;
   unusedBonesCount: number;
   bones: BoneInfo[];
+  invalidWeightLocations?: DiagnosticLocation[];
+  zeroWeightLocations?: DiagnosticLocation[];
 }
 
 export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats {
