@@ -12,6 +12,7 @@ import {
 import type { HealthIssue } from '../types';
 import { createAssetDoctorTestPatient } from '../loaders/SampleModels';
 import { measureGeometryNormals } from '../analysis/NormalsMeasure';
+import { measureSkinWeights } from '../analysis/SkinWeightMeasure';
 
 export interface SurgicalHealTestResult {
   name: string;
@@ -174,6 +175,48 @@ function makeExactDuplicateFixture() {
   const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
   mesh.name = 'ExactDuplicateFixture';
   root.add(mesh);
+  return { root, mesh };
+}
+
+function makeSkinWeightFixture(includeZeroWeight = false) {
+  const root = new THREE.Group();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ], 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute([
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+  ], 3));
+  geometry.setIndex([0, 1, 2]);
+  geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute([
+    0, 1, 0, 0,
+    0, 1, 0, 0,
+    0, 1, 0, 0,
+  ], 4));
+  geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute([
+    0.60, 0.20, 0, 0,
+    0.90, 0.30, 0, 0,
+    ...(includeZeroWeight ? [0, 0, 0, 0] : [0.75, 0.25, 0, 0]),
+  ], 4));
+
+  const rootBone = new THREE.Bone();
+  rootBone.name = 'WeightRoot';
+  const childBone = new THREE.Bone();
+  childBone.name = 'WeightChild';
+  childBone.position.y = 1;
+  rootBone.add(childBone);
+
+  const mesh = new THREE.SkinnedMesh(geometry, new THREE.MeshBasicMaterial());
+  mesh.name = 'SkinWeightFixture';
+  mesh.add(rootBone);
+  mesh.bind(new THREE.Skeleton([rootBone, childBone]));
+  root.add(mesh);
+  root.updateMatrixWorld(true);
+
   return { root, mesh };
 }
 
@@ -470,7 +513,7 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
     } as HealthIssue;
 
     return getRepairOperationForIssue(issue) === null &&
-      listRepairOperations().length === 4;
+      listRepairOperations().length === 5;
   });
 
   test('Remove Unreferenced Vertices compacts every supported vertex-domain attribute and Undo restores the original geometry', () => {
@@ -761,6 +804,104 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
     }
   });
 
+  test('Normalize Skin Weights repairs non-zero sums, preserves indices/topology, and Undo restores original weights', () => {
+    const { root, mesh } = makeSkinWeightFixture(false);
+    const engine = new SurgicalHealEngine();
+    const originalGeometry = mesh.geometry;
+    try {
+      const before = measureSkinWeights(mesh);
+      const preview = engine.previewNormalizeSkinWeights(root, mesh.uuid);
+      const applied = engine.applyPending(root, 'SkinWeightFixture.glb');
+      const operationId = engine.getLastOperation()!.operationId;
+      engine.completeVerification(operationId, true);
+      const report = engine.getLastOperation()!;
+      const after = measureSkinWeights(mesh);
+
+      const normalized =
+        before.supported &&
+        before.invalidSumCount === 2 &&
+        before.zeroWeightCount === 0 &&
+        preview.status === 'READY' &&
+        preview.operation === 'normalize-skin-weights' &&
+        preview.metric === 'weights' &&
+        preview.metricBefore === 2 &&
+        preview.metricAfter === 0 &&
+        applied.success &&
+        report.status === 'VERIFIED' &&
+        report.before.invalidSkinWeights === 2 &&
+        report.after?.invalidSkinWeights === 0 &&
+        report.after?.zeroWeightVertices === 0 &&
+        after.supported &&
+        after.invalidSumCount === 0 &&
+        mesh.geometry.index?.count === 3 &&
+        mesh.geometry.getAttribute('skinIndex').getX(0) === 0 &&
+        mesh.geometry.getAttribute('skinIndex').getY(0) === 1;
+
+      const undo = engine.undoLast(root);
+      const restored = measureSkinWeights(mesh);
+      return normalized &&
+        undo.success &&
+        mesh.geometry === originalGeometry &&
+        restored.supported &&
+        restored.invalidSumCount === 2;
+    } finally {
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+  });
+
+  test('Normalize Skin Weights never guesses zero-weight influences', () => {
+    const { root, mesh } = makeSkinWeightFixture(true);
+    const engine = new SurgicalHealEngine();
+    try {
+      const before = measureSkinWeights(mesh);
+      const preview = engine.previewNormalizeSkinWeights(root, mesh.uuid);
+      engine.applyPending(root, 'SkinWeightZeroControl.glb');
+      const operationId = engine.getLastOperation()!.operationId;
+      engine.completeVerification(operationId, true);
+      const report = engine.getLastOperation()!;
+      const after = measureSkinWeights(mesh);
+
+      return before.invalidSumCount === 2 &&
+        before.zeroWeightCount === 1 &&
+        preview.status === 'READY' &&
+        report.status === 'VERIFIED' &&
+        after.invalidSumCount === 0 &&
+        after.zeroWeightCount === 1 &&
+        mesh.geometry.getAttribute('skinWeight').getX(2) === 0 &&
+        mesh.geometry.getAttribute('skinWeight').getY(2) === 0;
+    } finally {
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+  });
+
+  test('Normalize Skin Weights is registered as a geometry repair', () => {
+    const { root, mesh } = makeSkinWeightFixture(false);
+    const engine = new SurgicalHealEngine();
+    try {
+      const issue = {
+        id: 'skin-invalid-sum',
+        category: 'Skinning',
+        severity: 'WARNING',
+        title: 'Unnormalized bone weights',
+        description: 'Synthetic skin-weight fixture',
+        meshUuid: mesh.uuid,
+        meshName: mesh.name,
+      } as HealthIssue;
+      const operation = getRepairOperationForIssue(issue);
+      const preview = previewRepairIssue(engine, root, issue);
+      return operation?.kind === 'normalize-skin-weights' &&
+        operation.capabilities.exportPatch === 'geometry' &&
+        preview?.status === 'READY' &&
+        preview.affectedCount === 2;
+    } finally {
+      engine.cancelPreview();
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+  });
+
   test('Asset Doctor Test Patient exposes deterministic repairable and manual-review findings', () => {
     const sample = createAssetDoctorTestPatient();
     const meshes: THREE.Mesh[] = [];
@@ -781,6 +922,7 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
       const repairStats = analyzeMeshTopology(meshTopologyData(repairTarget));
       const nonManifoldStats = analyzeMeshTopology(meshTopologyData(nonManifold));
       const duplicateStats = analyzeMeshTopology(meshTopologyData(exactDuplicates));
+      const rigWeights = measureSkinWeights(rig);
       const normals = zeroNormals.geometry.getAttribute('normal');
       let allNormalsZero = true;
       for (let i = 0; i < normals.count; i++) {
@@ -800,6 +942,9 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
         !missingNormals.geometry.getAttribute('normal') &&
         duplicateStats.potentialDuplicatePositions >= 2 &&
         rig.isSkinnedMesh === true &&
+        rigWeights.supported &&
+        rigWeights.invalidSumCount === 2 &&
+        rigWeights.zeroWeightCount === 0 &&
         rig.skeleton.bones.some((bone) => bone.name === 'UnusedLocator') &&
         sample.animations.length === 1 &&
         sample.animations[0].name === 'Diagnostic_Bone_Sway';
