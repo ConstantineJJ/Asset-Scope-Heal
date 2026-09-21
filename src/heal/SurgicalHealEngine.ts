@@ -142,7 +142,7 @@ export class SurgicalHealEngine {
   }
 
   public previewRemoveDegenerateTriangles(root: THREE.Object3D, meshUuid: string): HealPreview {
-    this.pending = null;
+    this.disposePending();
 
     const obj = root.getObjectByProperty('uuid', meshUuid);
     if (!obj || !(obj as THREE.Mesh).isMesh) {
