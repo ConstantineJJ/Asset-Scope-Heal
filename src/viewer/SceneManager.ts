@@ -664,7 +664,7 @@ export class SceneManager {
         depthTest: false,
         depthWrite: false,
         transparent: true,
-        opacity: 0.95,
+        opacity: 0.70,
       });
       this.issueMarker = new THREE.Mesh(markerGeometry, markerMaterial);
       this.issueMarker.name = '__ascope_internal_issue_marker';
