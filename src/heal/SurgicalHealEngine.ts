@@ -543,18 +543,17 @@ export class SurgicalHealEngine {
       );
     }
 
-    const protectedKeys = [
-      'triangleCount',
-      'degenerateTriangles',
-      'boundaryEdges',
-      'nonManifoldEdges',
-      'isolatedVertices',
-      'componentsCount',
-      'thinTriangles',
-      'tinyComponentsCount',
-    ] as const;
+    const regresses =
+      after.triangleCount !== before.triangleCount ||
+      after.isolatedVertices !== before.isolatedVertices ||
+      after.degenerateTriangles > before.degenerateTriangles ||
+      after.boundaryEdges > before.boundaryEdges ||
+      after.nonManifoldEdges > before.nonManifoldEdges ||
+      after.componentsCount > before.componentsCount ||
+      after.thinTriangles > before.thinTriangles ||
+      after.tinyComponentsCount > before.tinyComponentsCount;
 
-    if (protectedKeys.some((key) => after[key] !== before[key])) {
+    if (regresses) {
       planned.replacement.dispose();
       return this.blockedDuplicates(
         mesh.uuid,
