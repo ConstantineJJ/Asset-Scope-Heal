@@ -40,6 +40,10 @@ export const en = {
         label: 'Remove Degenerate Triangles',
         description: 'Preview a guarded index-only repair for degenerate triangles.',
       },
+      removeUnreferencedVertices: {
+        label: 'Remove Unreferenced Vertices',
+        description: 'Compact vertex buffers by removing vertices not referenced by the index buffer.',
+      },
     },
   },
   heal: {
@@ -49,7 +53,9 @@ export const en = {
       REGRESSION: 'Post-check found a regression. Review the changes and consider Undo.',
       historical: 'Saved history only. This report does not verify the currently loaded asset; its Undo data is not restored.',
       undone: 'UNDONE — the index buffer was restored. The table records the original Apply, not the current geometry.',
-      scope: 'Scope: target mesh topology and index-only preservation. This is not a certificate for the whole asset. The source file is unchanged.',
+      scope: 'Scope: the selected target mesh. This is not a certificate for the whole asset. The source file is unchanged.',
+      scopeIndex: 'Scope: target mesh topology and index-only preservation. The source file is unchanged.',
+      scopeGeometry: 'Scope: target mesh topology and vertex-domain attribute preservation. The source file is unchanged.',
       measured: 'Measured before / after Apply',
       metric: 'Metric', before: 'Before', after: 'After', delta: 'Delta', unavailable: 'N/A',
       pipeline_pending: 'Full diagnostic refresh: pending. Verification is incomplete.',
@@ -65,7 +71,7 @@ export const en = {
     },
     reasons: {
       measurementUnavailable: 'Post-check measurements are unavailable; success cannot be confirmed.',
-      unexpectedGeometry: 'The geometry differs from the expected index-only change.',
+      unexpectedGeometry: 'The geometry differs from the expected repair result.',
       boundaryEdges: 'Boundary edge count increased.', nonManifoldEdges: 'Non-manifold edge count increased.',
       componentsCount: 'Connected component count increased.', thinTriangles: 'Thin triangle count increased.',
       tinyComponentsCount: 'Tiny component count increased.', potentialDuplicatePositions: 'Duplicate position count increased.',
@@ -75,6 +81,11 @@ export const en = {
     },
     errors: {
       invalidGeometry: 'Invalid indices or non-finite positions. Repair is blocked.',
+      sharedGeometry: 'Geometry is shared by multiple meshes. Repair is blocked to avoid changing several objects at once.',
+      unreferencedNeedsIndexedGeometry: 'Remove Unreferenced Vertices requires indexed geometry.',
+      vertexMetadataUnsupported: 'Geometry contains custom metadata; safe vertex-index remapping cannot be guaranteed yet.',
+      vertexAttributeUnsupported: 'One or more vertex or morph attributes have an unsupported layout or count.',
+      noUnreferencedVertices: 'No unreferenced vertices remain on this mesh.',
       stalePreview: 'Geometry changed after Preview. Generate a new preview before Apply.',
       beforeUnavailable: 'Before measurements failed. No repair was applied.',
       staleUndo: 'Geometry changed or became shared after Apply. Undo is blocked to protect subsequent edits.',
