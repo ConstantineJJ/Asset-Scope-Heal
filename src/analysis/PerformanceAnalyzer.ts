@@ -1,4 +1,5 @@
-import type { AssetSummary, HealthIssue, TextureInfo } from '../types';
+import type { AssetSummary, DiagnosticProfileId, HealthIssue, TextureInfo } from '../types';
+import { getDiagnosticProfile } from '../health/DiagnosticProfiles';
 
 export interface PerformanceStats {
   estimatedDrawCalls: number;
@@ -15,15 +16,17 @@ export interface PerformanceStats {
 export function analyzePerformance(
   summary: AssetSummary,
   textures: TextureInfo[],
-  trackCount: number
+  trackCount: number,
+  profileId: DiagnosticProfileId = 'general'
 ): { stats: PerformanceStats; issues: HealthIssue[] } {
+  const profile = getDiagnosticProfile(profileId);
   let vramTotal = 0;
   let largeTextureCount = 0;
   let ultraLargeTextureCount = 0;
 
   for (const t of textures) {
     vramTotal += t.uncompressedBytesEstimate;
-    if (t.width > 4096 || t.height > 4096) {
+    if (t.width > profile.textureDimensionWarning || t.height > profile.textureDimensionWarning) {
       ultraLargeTextureCount++;
     } else if (t.width > 2048 || t.height > 2048) {
       largeTextureCount++;
@@ -47,13 +50,13 @@ export function analyzePerformance(
 
   const issues: HealthIssue[] = [];
 
-  if (estimatedDrawCalls > 80) {
+  if (estimatedDrawCalls > profile.drawCallWarning) {
     issues.push({
       id: 'perf-draw-calls-high',
       category: 'Performance',
       severity: 'WARNING',
       title: 'High draw call count',
-      description: `Estimated ${estimatedDrawCalls} draw calls. Consider batching or merging static geometries for real-time mobile/web performance.`,
+      description: `Estimated ${estimatedDrawCalls} draw calls exceed the ${profile.label} reference threshold of ${profile.drawCallWarning}. This is a target-fit warning, not a structural defect.`,
       count: estimatedDrawCalls,
       technicalDetails: `Mesh primitives: ${summary.primitiveCount}`,
     });
@@ -63,7 +66,7 @@ export function analyzePerformance(
       category: 'Performance',
       severity: 'OK',
       title: 'Draw call budget optimal',
-      description: `Asset requires ~${estimatedDrawCalls} draw call(s), suitable for real-time rasterization.`,
+      description: `Asset requires ~${estimatedDrawCalls} draw call(s), within the ${profile.label} reference threshold (${profile.drawCallWarning}).`,
       count: estimatedDrawCalls,
     });
   }
@@ -73,8 +76,8 @@ export function analyzePerformance(
       id: 'perf-ultra-large-textures',
       category: 'Textures',
       severity: 'WARNING',
-      title: 'Textures exceeding 4096px detected',
-      description: `${ultraLargeTextureCount} texture(s) have dimension > 4096 px. May exhaust mobile GPU memory limits.`,
+      title: 'Textures exceeding profile.textureDimensionWarningpx detected',
+      description: `${ultraLargeTextureCount} texture(s) have dimension > profile.textureDimensionWarning px. May exhaust mobile GPU memory limits.`,
       count: ultraLargeTextureCount,
     });
   }
@@ -85,18 +88,18 @@ export function analyzePerformance(
       category: 'Textures',
       severity: 'INFO',
       title: 'Textures above 2048px detected',
-      description: `${largeTextureCount} texture(s) have 4K (4096px) resolution. Ensure target platforms have adequate VRAM.`,
+      description: `${largeTextureCount} texture(s) have 4K (profile.textureDimensionWarningpx) resolution. Ensure target platforms have adequate VRAM.`,
       count: largeTextureCount,
     });
   }
 
-  if (summary.triangleCount > 300000) {
+  if (summary.triangleCount > profile.triangleWarning) {
     issues.push({
       id: 'perf-triangle-high',
       category: 'Performance',
       severity: 'WARNING',
       title: 'High triangle count for real-time delivery',
-      description: `Asset contains ${summary.triangleCount.toLocaleString()} triangles. Recommend LOD generation for low-end devices.`,
+      description: `Asset contains ${summary.triangleCount.toLocaleString()} triangles, above the ${profile.label} reference threshold of ${profile.triangleWarning.toLocaleString()}. This does not mean the mesh is unhealthy.`,
       count: summary.triangleCount,
     });
   }

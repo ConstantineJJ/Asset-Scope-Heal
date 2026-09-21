@@ -1,12 +1,17 @@
 import type {
+  AssetSummary,
+  DiagnosticLayer,
+  DiagnosticProfileId,
   HealthCategory,
   HealthIssue,
   HealthSeverity,
+  Repairability,
   MaterialInfo,
   SkinningStats,
   TextureInfo,
   TopologyStats,
 } from '../types';
+import { getDiagnosticProfile } from './DiagnosticProfiles';
 
 export function aggregateTopologyIssues(topologyResults: TopologyStats[]): HealthIssue[] {
   const issues: HealthIssue[] = [];
@@ -169,9 +174,14 @@ export function evaluateSkinningIssues(stats: SkinningStats): HealthIssue[] {
     issues.push({
       id: 'skin-static-ok',
       category: 'Skeleton',
-      severity: 'INFO',
-      title: 'Static non-rigged asset',
-      description: 'Asset does not contain skeletal armatures or skinned mesh nodes.',
+      severity: 'N/A',
+      layer: 'Health',
+      title: 'Rig-specific checks not applicable',
+      description: 'Asset does not contain skeletal armatures or skinned mesh nodes, so skinning-specific diagnostics do not apply.',
+      evidence: 'No Skeleton / SkinnedMesh detected.',
+      whyItMatters: 'Absence of a rig is not a defect for static assets.',
+      suggestedAction: 'No action required unless a rig was expected for the intended use.',
+      repairability: 'NONE',
     });
     return issues;
   }
@@ -361,6 +371,8 @@ export function countIssuesBySeverity(issues: HealthIssue[]): Record<HealthSever
     INFO: 0,
     WARNING: 0,
     ERROR: 0,
+    'N/A': 0,
+    UNKNOWN: 0,
   };
   for (const issue of issues) {
     counts[issue.severity] = (counts[issue.severity] || 0) + 1;
@@ -376,7 +388,8 @@ export function filterIssuesByCategory(
 }
 
 export interface HealthAggregateParams {
-  summary: import('../types').AssetSummary;
+  summary: AssetSummary;
+  profileId?: DiagnosticProfileId;
   materials: MaterialInfo[];
   textures: TextureInfo[];
   skeleton: SkinningStats;
@@ -387,9 +400,151 @@ export interface HealthAggregateParams {
   topology: TopologyStats[];
 }
 
+
+function evaluateIntegrity(summary: AssetSummary): HealthIssue[] {
+  const numericValues = [
+    summary.nodeCount,
+    summary.meshCount,
+    summary.vertexCount,
+    summary.triangleCount,
+    summary.materialCount,
+    summary.textureCount,
+    ...summary.boundingBox.min,
+    ...summary.boundingBox.max,
+    ...summary.boundingBox.size,
+    ...summary.boundingBox.center,
+    summary.boundingBox.diagonal,
+  ];
+
+  const hasInvalidNumber = numericValues.some((value) => !Number.isFinite(value) || value < 0);
+
+  if (hasInvalidNumber) {
+    return [{
+      id: 'integrity-core-numeric-invalid',
+      category: 'Geometry',
+      severity: 'ERROR',
+      layer: 'Integrity',
+      title: 'Invalid core asset data',
+      description: 'One or more parsed scene/geometry metrics contain invalid, negative, NaN, or infinite values.',
+      evidence: 'Core scene metrics failed finite/non-negative validation.',
+      whyItMatters: 'Invalid numeric data can break camera framing, rendering, physics, export, or downstream repair operations.',
+      suggestedAction: 'Inspect the source asset and parser diagnostics before attempting any repair.',
+      repairability: 'MANUAL',
+    }];
+  }
+
+  if (summary.meshCount === 0) {
+    return [{
+      id: 'integrity-no-meshes',
+      category: 'Geometry',
+      severity: 'INFO',
+      layer: 'Integrity',
+      title: 'No renderable meshes detected',
+      description: 'The scene parsed successfully but contains no mesh primitives.',
+      evidence: `meshCount=${summary.meshCount}, nodeCount=${summary.nodeCount}`,
+      whyItMatters: 'This may be intentional for a helper/animation-only scene, but there is no visible surface to inspect.',
+      suggestedAction: 'Confirm that a mesh-free scene is intentional.',
+      repairability: 'NONE',
+    }];
+  }
+
+  return [{
+    id: 'integrity-core-readable',
+    category: 'Geometry',
+    severity: 'OK',
+    layer: 'Integrity',
+    title: 'Core scene data is structurally readable',
+    description: 'Scene hierarchy, mesh counts and bounding data were parsed into finite values.',
+    evidence: `${summary.meshCount} mesh(es), ${summary.vertexCount.toLocaleString()} vertices, ${summary.triangleCount.toLocaleString()} triangles.`,
+    whyItMatters: 'This establishes a trustworthy base for deeper Health and Fitness diagnostics.',
+    suggestedAction: 'No action required.',
+    repairability: 'NONE',
+  }];
+}
+
+function defaultLayer(issue: HealthIssue): DiagnosticLayer {
+  if (issue.layer) return issue.layer;
+  if (issue.category === 'Performance') return 'Fitness';
+  if (
+    issue.id.startsWith('perf-') ||
+    issue.id === 'tex-over-4096' ||
+    issue.id === 'skin-max-influences'
+  ) {
+    return 'Fitness';
+  }
+  return 'Health';
+}
+
+function defaultRepairability(issue: HealthIssue): Repairability {
+  if (issue.repairability) return issue.repairability;
+  if (issue.severity === 'OK' || issue.severity === 'INFO' || issue.severity === 'N/A') return 'NONE';
+
+  if (
+    issue.id === 'topo-non-manifold-edges' ||
+    issue.id === 'topo-duplicate-positions' ||
+    issue.id === 'transform-negative-scale'
+  ) {
+    return 'MANUAL';
+  }
+
+  if (
+    issue.id === 'topo-degenerate-triangles' ||
+    issue.id === 'topo-isolated-vertices' ||
+    issue.id === 'topo-tiny-components' ||
+    issue.id === 'normals-zero' ||
+    issue.id === 'skin-invalid-sum' ||
+    issue.id === 'transform-root-scale' ||
+    issue.id === 'transform-extreme-scale'
+  ) {
+    return 'CONDITIONAL';
+  }
+
+  return issue.severity === 'ERROR' ? 'MANUAL' : 'NONE';
+}
+
+function suggestedActionFor(issue: HealthIssue): string {
+  if (issue.suggestedAction) return issue.suggestedAction;
+
+  switch (issue.repairability ?? defaultRepairability(issue)) {
+    case 'SAFE':
+      return 'A deterministic non-destructive repair may be offered after preview and revalidation.';
+    case 'CONDITIONAL':
+      return 'Inspect the affected region first. Any repair must be previewed and followed by revalidation.';
+    case 'MANUAL':
+      return 'Manual or external-tool repair is recommended. Do not auto-fix this condition.';
+    default:
+      return 'No repair action is required.';
+  }
+}
+
+function decorateIssue(issue: HealthIssue, profileId: DiagnosticProfileId): HealthIssue {
+  const layer = defaultLayer(issue);
+  const repairability = defaultRepairability(issue);
+
+  return {
+    ...issue,
+    layer,
+    repairability,
+    profileId,
+    profileDependent: issue.profileDependent ?? layer === 'Fitness',
+    evidence:
+      issue.evidence ??
+      (issue.count !== undefined
+        ? `Observed count: ${issue.count}`
+        : issue.technicalDetails ?? issue.description),
+    whyItMatters: issue.whyItMatters ?? issue.description,
+    suggestedAction: suggestedActionFor({ ...issue, repairability }),
+  };
+}
+
 export class HealthEngine {
   public static aggregate(params: HealthAggregateParams): HealthIssue[] {
     const issues: HealthIssue[] = [];
+    const profileId = params.profileId ?? 'general';
+    getDiagnosticProfile(profileId);
+
+    // Diagnostic Core v1 — Layer 1: Integrity.
+    issues.push(...evaluateIntegrity(params.summary));
 
     // 1. Materials
     issues.push(...evaluateMaterialIssues(params.materials));
@@ -424,6 +579,8 @@ export class HealthEngine {
       issues.push(...aggregateTopologyIssues(params.topology));
     }
 
-    return issues;
+    // Diagnostic Core v1 — normalize every finding into Integrity / Health / Fitness
+    // and attach conservative repair metadata. This does NOT perform any repair.
+    return issues.map((issue) => decorateIssue(issue, profileId));
   }
 }

@@ -1,4 +1,29 @@
-export type HealthSeverity = 'OK' | 'INFO' | 'WARNING' | 'ERROR';
+export type HealthSeverity = 'OK' | 'INFO' | 'WARNING' | 'ERROR' | 'N/A' | 'UNKNOWN';
+
+export type DiagnosticLayer = 'Integrity' | 'Health' | 'Fitness';
+
+export type Repairability = 'NONE' | 'SAFE' | 'CONDITIONAL' | 'MANUAL';
+
+export type DiagnosticProfileId =
+  | 'general'
+  | 'desktop-game-character'
+  | 'mobile-game-character'
+  | 'static-prop'
+  | 'animated-character'
+  | 'mechanical-asset'
+  | 'visualization';
+
+export interface DiagnosticProfile {
+  id: DiagnosticProfileId;
+  label: string;
+  description: string;
+  triangleWarning: number;
+  drawCallWarning: number;
+  textureDimensionWarning: number;
+  maxBoneInfluencesWarning: number;
+  expectsRig?: boolean;
+  expectsAnimations?: boolean;
+}
 
 export type HealthCategory =
   | 'Geometry'
@@ -19,6 +44,28 @@ export interface HealthIssue {
   severity: HealthSeverity;
   title: string;
   description: string;
+
+  /** Diagnostic Core v1: Integrity → Health → Fitness. */
+  layer?: DiagnosticLayer;
+
+  /** Concrete observation that caused this finding. */
+  evidence?: string;
+
+  /** Why the observation can matter technically. */
+  whyItMatters?: string;
+
+  /** Conservative next step. This is guidance, not an automatic repair. */
+  suggestedAction?: string;
+
+  /** How safely Asset Doctor could eventually repair this finding. */
+  repairability?: Repairability;
+
+  /** Profile used to interpret target-dependent findings. */
+  profileId?: DiagnosticProfileId;
+
+  /** True when severity depends on intended use rather than structural validity. */
+  profileDependent?: boolean;
+
   meshName?: string;
   meshUuid?: string;
   count?: number;

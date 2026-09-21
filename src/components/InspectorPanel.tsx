@@ -75,6 +75,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     WARNING: healthIssues.filter((i) => i.severity === 'WARNING').length,
     INFO: healthIssues.filter((i) => i.severity === 'INFO').length,
     OK: healthIssues.filter((i) => i.severity === 'OK').length,
+    NA: healthIssues.filter((i) => i.severity === 'N/A').length,
+    UNKNOWN: healthIssues.filter((i) => i.severity === 'UNKNOWN').length,
   };
 
   const formatBytes = (bytes?: number) => {
@@ -95,6 +97,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         return <Info className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />;
       case 'OK':
         return <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />;
+      case 'N/A':
+        return <HelpCircle className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />;
+      case 'UNKNOWN':
+        return <HelpCircle className="w-4 h-4 text-violet-400 shrink-0 mt-0.5" />;
     }
   };
 
@@ -108,6 +114,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         return 'bg-sky-950/60 border-sky-800 text-sky-300';
       case 'OK':
         return 'bg-emerald-950/60 border-emerald-800 text-emerald-300';
+      case 'N/A':
+        return 'bg-gray-900/60 border-gray-700 text-gray-300';
+      case 'UNKNOWN':
+        return 'bg-violet-950/60 border-violet-800 text-violet-300';
     }
   };
 
@@ -184,6 +194,24 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       {/* TAB 1: ASSET HEALTH & DETERMINISTIC DIAGNOSTICS */}
       {activeTab === 'health' && (
         <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
+          {/* Diagnostic Core v1 */}
+          <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-cyan-400">Diagnostic Core v1</div>
+                <div className="text-[11px] text-gray-300 mt-0.5">Integrity → Health → Fitness</div>
+              </div>
+              <span className="px-2 py-1 rounded bg-[#15171c] border border-[#2d313a] text-[9px] font-mono text-gray-400">
+                General Inspection
+              </span>
+            </div>
+            {(severityCounts.NA > 0 || severityCounts.UNKNOWN > 0) && (
+              <div className="text-[10px] text-gray-400 font-mono">
+                N/A: {severityCounts.NA} · Unknown: {severityCounts.UNKNOWN}
+              </div>
+            )}
+          </div>
+
           {/* Progressive Analysis Pipeline Tracker */}
           <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-1.5">
             <div className="flex items-center justify-between text-[11px] font-semibold text-gray-300">
@@ -317,6 +345,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                         <span className="text-[10px] text-gray-400 font-mono">
                           [{issue.category}]
                         </span>
+                        <span className="text-[9px] text-cyan-300/80 font-mono uppercase">
+                          {issue.layer ?? 'Health'}
+                        </span>
                       </div>
                       <h4 className="font-semibold text-gray-100 mt-0.5">{issue.title}</h4>
                     </div>
@@ -341,6 +372,22 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 {issue.technicalDetails && (
                   <div className="ml-6 p-1.5 rounded bg-[#15171c] border border-[#242730] font-mono text-[10px] text-gray-400">
                     {issue.technicalDetails}
+                  </div>
+                )}
+
+                {(issue.evidence || issue.suggestedAction || issue.repairability) && (
+                  <div className="ml-6 pt-1.5 border-t border-[#262932] space-y-1 text-[10px]">
+                    {issue.evidence && (
+                      <div><span className="text-gray-500">Evidence:</span> <span className="text-gray-300">{issue.evidence}</span></div>
+                    )}
+                    {issue.suggestedAction && (
+                      <div><span className="text-gray-500">Next:</span> <span className="text-gray-300">{issue.suggestedAction}</span></div>
+                    )}
+                    {issue.repairability && issue.repairability !== 'NONE' && (
+                      <span className="inline-block mt-1 px-1.5 py-0.5 rounded bg-[#15171c] border border-[#343845] text-amber-300 font-mono uppercase">
+                        Repair: {issue.repairability}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
