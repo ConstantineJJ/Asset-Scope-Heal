@@ -8,20 +8,25 @@ import {
   runDiagnosticCoreTests,
   type DiagnosticCoreTestResult,
 } from '../analysis/DiagnosticCoreTests';
+import {
+  runSurgicalHealTests,
+  type SurgicalHealTestResult,
+} from '../heal/SurgicalHealTests';
 
 interface TopologyTestModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-type CombinedTestResult = (TopologyTestResult | DiagnosticCoreTestResult) & {
-  suite: 'Topology' | 'Diagnostic Core';
+type CombinedTestResult = (TopologyTestResult | DiagnosticCoreTestResult | SurgicalHealTestResult) & {
+  suite: 'Topology' | 'Diagnostic Core' | 'Surgical Heal';
 };
 
 function runAllTests(): CombinedTestResult[] {
   return [
     ...runSyntheticTopologyTests().map((result) => ({ ...result, suite: 'Topology' as const })),
     ...runDiagnosticCoreTests().map((result) => ({ ...result, suite: 'Diagnostic Core' as const })),
+    ...runSurgicalHealTests().map((result) => ({ ...result, suite: 'Surgical Heal' as const })),
   ];
 }
 
@@ -67,7 +72,7 @@ export const TopologyTestModal: React.FC<TopologyTestModalProps> = ({ isOpen, on
         {/* Modal Status Header */}
         <div className="px-4 py-2.5 bg-[#17191e] border-b border-[#262932] flex items-center justify-between">
           <span className="text-gray-300">
-            Evaluating topology algorithms and Diagnostic Core semantics
+            Evaluating topology, Diagnostic Core, and Surgical Heal semantics
           </span>
           <span
             className={`px-2 py-0.5 rounded font-mono font-bold text-[11px] ${
@@ -103,7 +108,9 @@ export const TopologyTestModal: React.FC<TopologyTestModalProps> = ({ isOpen, on
                     <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono border ${
                       test.suite === 'Diagnostic Core'
                         ? 'text-cyan-300 border-cyan-900 bg-cyan-950/40'
-                        : 'text-emerald-300 border-emerald-900 bg-emerald-950/40'
+                        : test.suite === 'Surgical Heal'
+                          ? 'text-amber-300 border-amber-900 bg-amber-950/40'
+                          : 'text-emerald-300 border-emerald-900 bg-emerald-950/40'
                     }`}>
                       {test.suite}
                     </span>
