@@ -110,8 +110,9 @@ export function App() {
 
     return () => {
       loaderServiceRef.current?.dispose();
+      loaderServiceRef.current = null;
       workerManagerRef.current?.dispose();
-      sceneManagerRef.current?.dispose();
+      workerManagerRef.current = null;
     };
   }, []);
 
@@ -336,7 +337,13 @@ export function App() {
           1024 * 340
         );
 
-        return () => clearInterval(fpsInterval);
+        return () => {
+          clearInterval(fpsInterval);
+          if (sceneManagerRef.current === mgr) {
+            mgr.dispose();
+            sceneManagerRef.current = null;
+          }
+        };
       }
     },
     [loadAsset]
