@@ -18,6 +18,7 @@ import { HealthEngine } from './health/HealthEngine';
 import { useI18n } from './i18n';
 import { readHealReport, saveHealReport } from './heal/HealReportStorage';
 import { SurgicalHealEngine } from './heal/SurgicalHealEngine';
+import { previewRepairIssue } from './heal/framework/RepairRegistry';
 import {
   RepairedExportService,
   type ExportSourceDescriptor,
@@ -638,13 +639,11 @@ export function App() {
   const handlePreviewHeal = (issue: HealthIssue) => {
     const root = currentAssetRootRef.current;
     const engine = healEngineRef.current;
-    if (!root || !engine || !issue.meshUuid || healBusyRef.current) return;
+    if (!root || !engine || healBusyRef.current) return;
 
-    if (issue.id !== 'topo-degenerate-triangles') {
-      return;
-    }
+    const preview = previewRepairIssue(engine, root, issue);
+    if (!preview) return;
 
-    const preview = engine.previewRemoveDegenerateTriangles(root, issue.meshUuid);
     setHealPreview(preview);
 
     if (preview.status === 'READY') {
