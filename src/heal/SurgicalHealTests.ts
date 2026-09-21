@@ -71,6 +71,15 @@ function makeUnreferencedFixture() {
     0.25, 0.25,
     0.75, 0.75,
   ], 2));
+  const interleavedColorData = new THREE.InterleavedBuffer(new Float32Array([
+    1, 0, 0, 99,
+    0, 1, 0, 99,
+    0, 0, 1, 99,
+    1, 1, 0, 99,
+    1, 0, 1, 99,
+  ]), 4);
+  geometry.setAttribute('color', new THREE.InterleavedBufferAttribute(interleavedColorData, 3, 0));
+
   geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute([
     0, 1, 0, 0,
     0, 1, 0, 0,
@@ -427,9 +436,14 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
         compacted.attributes.position.count === 3 &&
         compacted.attributes.normal.count === 3 &&
         compacted.attributes.uv.count === 3 &&
+        compacted.attributes.color.count === 3 &&
         compacted.attributes.skinIndex.count === 3 &&
         compacted.attributes.skinWeight.count === 3 &&
         compacted.morphAttributes.position?.[0]?.count === 3 &&
+        compacted.attributes.uv.getX(1) === 1 &&
+        compacted.attributes.color.getZ(2) === 1 &&
+        compacted.attributes.skinIndex.getY(0) === 1 &&
+        Math.abs(compacted.morphAttributes.position![0].getX(1) - 0.1) < 1e-6 &&
         compacted.groups.length === 1 &&
         compacted.groups[0].start === 0 &&
         compacted.groups[0].count === 3 &&
