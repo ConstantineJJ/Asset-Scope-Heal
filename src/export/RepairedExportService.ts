@@ -266,9 +266,8 @@ export class RepairedExportService {
     const seen = new Set<string>();
     root.traverse((obj) => {
       if (!(obj as THREE.Mesh).isMesh) return;
-      const mats = Array.isArray((obj as THREE.Mesh).material)
-        ? (obj as THREE.Mesh).material
-        : [(obj as THREE.Mesh).material];
+      const materialValue = (obj as THREE.Mesh).material;
+      const mats: THREE.Material[] = Array.isArray(materialValue) ? materialValue : [materialValue];
       for (const material of mats) {
         if (!material || seen.has(material.uuid)) continue;
         seen.add(material.uuid);
