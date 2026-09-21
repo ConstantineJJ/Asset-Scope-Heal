@@ -6,6 +6,9 @@ import {
   Box,
   CheckCircle2,
   ChevronRight,
+  History,
+  RefreshCw,
+  Wrench,
   Database,
   ExternalLink,
   Eye,
@@ -60,6 +63,11 @@ interface InspectorPanelProps {
   healBusy: boolean;
   healError: string | null;
   healStorageFailed: boolean;
+  savedHealHistoryAvailable: boolean;
+  onShowHealHistory: () => void;
+  onDismissHealReport: () => void;
+  onClearHealHistory: () => void;
+  onRescan: () => void;
   exportReport: ExportVerificationReport | null;
   exportBusy: boolean;
   exportError: string | null;
@@ -87,6 +95,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onRestoreIssueView,
   healPreview,
   healUndoState, healReport, healHistorical, healBusy, healError, healStorageFailed,
+  savedHealHistoryAvailable, onShowHealHistory, onDismissHealReport, onClearHealHistory, onRescan,
   exportReport, exportBusy, exportError, canExport, onBuildExport, onDownloadExport,
   onPreviewHeal,
   onCancelHealPreview,
@@ -211,20 +220,59 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     focusIssueLocation(issue, next);
   };
 
+  const repairQueue = (() => {
+    const priority: Record<HealthSeverity, number> = {
+      ERROR: 0,
+      WARNING: 1,
+      INFO: 2,
+      UNKNOWN: 3,
+      'N/A': 4,
+      OK: 5,
+    };
+    const unique = new Map<string, HealthIssue>();
+
+    for (const issue of healthIssues) {
+      const operation = getRepairOperationForIssue(issue);
+      if (!operation || issue.severity === 'OK' || issue.severity === 'N/A') continue;
+
+      const locations = issue.locations?.length ? issue.locations : [null];
+      for (const location of locations) {
+        const candidate: HealthIssue = location
+          ? {
+              ...issue,
+              meshUuid: location.meshUuid,
+              meshName: location.meshName,
+              affectedElement: location.affectedElement,
+              affectedIndices: location.affectedIndices,
+              focusPosition: location.focusPosition,
+            }
+          : issue;
+
+        if (!candidate.meshUuid) continue;
+        const key = `${operation.kind}:${candidate.meshUuid}`;
+        if (!unique.has(key)) unique.set(key, candidate);
+      }
+    }
+
+    return Array.from(unique.values()).sort(
+      (a, b) => priority[a.severity] - priority[b.severity]
+    );
+  })();
+
   return (
     <aside className="w-96 bg-[#16181d] border-l border-[#262932] flex flex-col h-full shrink-0 select-none text-xs text-gray-200">
       {/* Inspector Tabs */}
-      <div className="h-10 px-2 border-b border-[#262932] flex items-center space-x-1 bg-[#1a1c22]">
+      <div className="h-10 px-2 border-b border-[#262932] grid grid-cols-5 gap-1 items-center bg-[#1a1c22]">
         <button
           onClick={() => setActiveTab('health')}
-          className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
+          className={`min-w-0 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
             activeTab === 'health'
               ? 'bg-[#252830] text-cyan-400 border border-[#373b46]'
               : 'text-gray-400 hover:text-gray-200'
           }`}
         >
           <Activity className="w-3.5 h-3.5" />
-          <span>{t('inspector.health')}</span>
+          <span className="truncate">{t('inspector.health')}</span>
           {severityCounts.ERROR > 0 && (
             <span className="px-1 py-0.2 rounded-full bg-rose-900/80 text-rose-300 text-[10px] font-mono">
               {severityCounts.ERROR}
@@ -234,50 +282,50 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
         <button
           onClick={() => setActiveTab('summary')}
-          className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
+          className={`min-w-0 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
             activeTab === 'summary'
               ? 'bg-[#252830] text-cyan-400 border border-[#373b46]'
               : 'text-gray-400 hover:text-gray-200'
           }`}
         >
           <FileText className="w-3.5 h-3.5" />
-          <span>{t('inspector.summary')}</span>
+          <span className="truncate">{t('inspector.summary')}</span>
         </button>
 
         <button
           onClick={() => setActiveTab('materials')}
-          className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
+          className={`min-w-0 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
             activeTab === 'materials'
               ? 'bg-[#252830] text-cyan-400 border border-[#373b46]'
               : 'text-gray-400 hover:text-gray-200'
           }`}
         >
           <Image className="w-3.5 h-3.5" />
-          <span>{t('inspector.materials')}</span>
+          <span className="truncate">{t('inspector.materials')}</span>
         </button>
 
         <button
           onClick={() => setActiveTab('skeleton')}
-          className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
+          className={`min-w-0 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
             activeTab === 'skeleton'
               ? 'bg-[#252830] text-cyan-400 border border-[#373b46]'
               : 'text-gray-400 hover:text-gray-200'
           }`}
         >
           <Zap className="w-3.5 h-3.5" />
-          <span>{t('inspector.rig')}</span>
+          <span className="truncate">{t('inspector.rig')}</span>
         </button>
 
         <button
           onClick={() => setActiveTab('performance')}
-          className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
+          className={`min-w-0 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
             activeTab === 'performance'
               ? 'bg-[#252830] text-cyan-400 border border-[#373b46]'
               : 'text-gray-400 hover:text-gray-200'
           }`}
         >
           <Gauge className="w-3.5 h-3.5" />
-          <span>Perf</span>
+          <span className="truncate">{t('inspector.performance')}</span>
         </button>
       </div>
 
@@ -285,6 +333,59 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       {activeTab === 'health' && (
         <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
           {/* Health stays model-centric: report quality filters live below. */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={onRescan}
+              disabled={progressiveState.topology === 'running' || healBusy}
+              className="flex items-center gap-1 px-2 py-1 rounded border border-[#343944] bg-[#202329] text-gray-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              title={t('inspector.rescanTitle')}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${progressiveState.topology === 'running' ? 'animate-spin' : ''}`} />
+              <span>{t('inspector.rescan')}</span>
+            </button>
+
+            {!healReport && savedHealHistoryAvailable && (
+              <button
+                onClick={onShowHealHistory}
+                className="flex items-center gap-1 px-2 py-1 rounded border border-[#343944] bg-[#202329] text-gray-300 hover:text-white cursor-pointer"
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>{t('heal.history')}</span>
+              </button>
+            )}
+          </div>
+
+          {repairQueue.length > 0 && (
+            <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Wrench className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-[10px] uppercase tracking-wider font-semibold text-gray-300">
+                      {t('heal.queue.title')}
+                    </div>
+                    <div className="text-[9px] text-gray-500">
+                      {t('heal.queue.count', { count: repairQueue.length })}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  disabled={healBusy}
+                  onClick={() => onPreviewHeal(repairQueue[0])}
+                  className="px-2 py-1 rounded border border-cyan-800 bg-cyan-950/30 text-cyan-300 hover:text-white disabled:opacity-40 cursor-pointer text-[10px]"
+                >
+                  {t('heal.queue.previewNext')}
+                </button>
+              </div>
+              <div className="text-[10px] text-gray-400 truncate">
+                {getRepairOperationForIssue(repairQueue[0])
+                  ? t(getRepairOperationForIssue(repairQueue[0])!.labelKey)
+                  : repairQueue[0].title}
+                {repairQueue[0].meshName ? ` · ${repairQueue[0].meshName}` : ''}
+              </div>
+            </div>
+          )}
+
           <HealReportPanel
             report={healReport}
             historical={healHistorical}
@@ -293,6 +394,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             storageFailed={healStorageFailed}
             undoState={healUndoState}
             onUndo={onUndoHeal}
+            onDismiss={onDismissHealReport}
+            onClearHistory={onClearHealHistory}
             exportReport={exportReport}
             exportBusy={exportBusy}
             exportError={exportError}
