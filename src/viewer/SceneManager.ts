@@ -38,6 +38,12 @@ export class SceneManager {
   private skeletonHelper: THREE.SkeletonHelper | null = null;
   private selectionBoxHelper: THREE.BoxHelper | null = null;
   private issueOverlay: THREE.Object3D | null = null;
+  private issueReturnView: {
+    position: THREE.Vector3;
+    target: THREE.Vector3;
+    near: number;
+    far: number;
+  } | null = null;
 
   private isGridVisible: boolean = true;
   private isAxesVisible: boolean = true;
@@ -607,7 +613,35 @@ export class SceneManager {
     return currentPoints.length > 0 ? center.multiplyScalar(1 / currentPoints.length) : null;
   }
 
+  private captureIssueReturnView() {
+    if (this.issueReturnView) return;
+    this.issueReturnView = {
+      position: this.camera.position.clone(),
+      target: this.cameraController.controls.target.clone(),
+      near: this.camera.near,
+      far: this.camera.far,
+    };
+  }
+
+  public restoreIssueView() {
+    if (!this.issueReturnView) {
+      this.clearIssueLocalization();
+      return;
+    }
+
+    this.clearIssueLocalization();
+    this.camera.position.copy(this.issueReturnView.position);
+    this.camera.near = this.issueReturnView.near;
+    this.camera.far = this.issueReturnView.far;
+    this.cameraController.controls.target.copy(this.issueReturnView.target);
+    this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld(true);
+    this.cameraController.controls.update();
+    this.issueReturnView = null;
+  }
+
   public localizeIssue(issue: HealthIssue) {
+    this.captureIssueReturnView();
     this.clearIssueLocalization();
 
     let targetObject: THREE.Object3D | null = null;
@@ -807,6 +841,7 @@ export class SceneManager {
 
   public disposeCurrentAsset() {
     this.clearIssueLocalization();
+    this.issueReturnView = null;
     if (!this.currentAssetRoot) return;
 
     if (this.animationMixer) {
