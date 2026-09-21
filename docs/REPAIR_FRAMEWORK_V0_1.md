@@ -4,17 +4,7 @@ Status: implemented on `main`.
 
 ## Goal
 
-Stop UI and application code from knowing individual repair issue IDs.
-
-Before this pass the application contained direct logic such as:
-
-`if issue.id === "topo-degenerate-triangles"`
-
-That is acceptable for one proof-of-concept repair, but it does not scale to a surgical toolkit.
-
-Repair Framework v0.1 introduces an operation catalog / registry between diagnostics and the transaction engine.
-
-## Architecture
+Repair Framework keeps diagnostics, UI and mutation logic separated.
 
 ```
 Diagnostic finding
@@ -27,100 +17,104 @@ SurgicalHealEngine
       ↓
 Preview → Apply → Verify → Undo
       ↓
-Export patch contract
+Export patch
+      ↓
+Reopen → Verify serialized result
 ```
 
-### RepairOperationDefinition
+Every repair declares:
 
-Each repair operation declares:
-
-- stable operation kind;
-- diagnostic issue IDs it can handle;
+- a stable operation kind;
+- diagnostic issue IDs it handles;
 - risk classification;
 - translation keys;
-- capabilities;
-- export mutation class;
-- preview adapter.
+- Preview / Apply / Undo / Verify capabilities;
+- export mutation class.
 
-Current capability contract:
-
-- preview
-- apply
-- undo
-- verify
-- exportPatch
-
-Current export patch classes:
+Supported export mutation classes:
 
 - `index-only`
 - `geometry`
-
-Both patch classes are now implemented by the repair/export path:
-- `index-only` for repairs that change only triangle indices;
-- `geometry` for verified vertex-domain remaps.
 
 ## Registered operations
 
 ### Remove Degenerate Triangles
 
-- diagnostic issue: `topo-degenerate-triangles`
+- issue: `topo-degenerate-triangles`
+- mutation: `index-only`
 - risk: `CONDITIONAL`
-- Preview: supported
-- Apply: supported
-- Verify: supported
-- Undo: supported
-- export patch: `index-only`
 
-The implementation still uses the proven SurgicalHealEngine v0.2 transaction path.
+Removes only deterministically degenerate indexed faces.
 
 ### Remove Unreferenced Vertices
 
-- diagnostic issue: `topo-isolated-vertices`
+- issue: `topo-isolated-vertices`
+- mutation: `geometry`
 - risk: `CONDITIONAL`
-- Preview: supported
-- Apply: supported
-- Verify: supported
-- Undo: supported
-- export patch: `geometry`
 
-The operation compacts every supported vertex-domain attribute and morph attribute using the same deterministic old-index → new-index map.
+Compacts the complete supported vertex/morph domain through one deterministic index remap.
 
-The important architectural change is that UI and App code discover both repairs through the registry rather than hard-coding diagnostic IDs.
+### Recalculate Normals
 
-## Why this matters
+- issues: `normals-missing`, `normals-zero`
+- mutation: `geometry`
+- risk: `CONDITIONAL`
 
-Future repairs can be added as operations instead of branching throughout:
+Rebuilds missing or invalid base vertex normals while preserving topology.
 
-- InspectorPanel
-- App
-- Surgical Heal UI
-- export logic
-- verification logic
+Safety gates block automatic repair when tangent streams or morph-target normals would become inconsistent.
 
-This reduces the chance that every repair invents its own Preview / Apply / Undo behavior.
+### Merge Exact Duplicate Vertices
 
-## Current direction
+- issue: `topo-duplicate-positions`
+- mutation: `geometry`
+- risk: `CONDITIONAL`
 
-The framework is now proven with two mutation classes:
+Only vertices whose complete vertex and morph attribute tuples match exactly are eligible.
 
-1. index-only mutation;
-2. full vertex-domain geometry remap.
+Beneficial welding is allowed, but any protected topology regression blocks the operation.
 
-New repair operations should reuse this lifecycle instead of adding special-case UI branches.
+### Normalize Skin Weights
+
+- issue: `skin-invalid-sum`
+- mutation: `geometry`
+- risk: `CONDITIONAL`
+
+Normalizes existing non-zero four-influence skin-weight rows to sum to 1.0 without changing bone indices.
+
+Zero-weight vertices remain manual-only because selecting a bone influence would require guessing author intent.
+
+## Explicit non-goals
+
+Asset Doctor does not auto-fix conditions merely because they are detectable.
+
+Current manual-only examples include:
+
+- non-manifold edges;
+- zero-weight skin vertices;
+- missing UV unwrap;
+- unused bones / sockets;
+- arbitrary tiny components;
+- needle triangles.
+
+Those require either author intent or a dedicated future repair strategy with stronger evidence.
 
 ## Safety rule
 
-Adding an operation to the catalog does not make it safe.
+Adding an operation to the registry does not make it safe.
 
-Every operation still needs its own:
+Every operation requires:
 
-1. detection contract;
-2. safety gates;
-3. deterministic Preview;
-4. mutation implementation;
-5. post-measurement verification;
-6. Undo contract;
-7. export patch support;
-8. unit tests.
+1. a deterministic detection contract;
+2. localizable evidence;
+3. explicit safety gates;
+4. Preview without mutation;
+5. guarded Apply;
+6. independent post-measurement;
+7. VERIFIED / PARTIAL / REGRESSION semantics;
+8. Undo;
+9. export patch support;
+10. independent reopen verification;
+11. unit tests.
 
-The framework standardizes the lifecycle. It does not weaken surgical safety.
+The framework standardizes the lifecycle. It never lowers the evidence threshold for a repair.
