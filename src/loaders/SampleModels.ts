@@ -9,332 +9,222 @@ export interface SampleAsset {
 }
 
 /**
- * Procedural sample models built cleanly with Three.js geometry & materials.
- * Enables instant inspection, topology diagnostics verification, and animation testing.
+ * Single procedural "test patient" for Asset Doctor.
+ *
+ * It intentionally mixes:
+ * - repairable defects used by the current Surgical Heal operations;
+ * - diagnostic-only defects used to verify that Asset Doctor does not over-repair;
+ * - a small rig + animation so one built-in asset still exercises skeleton/animation paths.
+ *
+ * The asset is deterministic and recreated from scratch for verified export tests.
  */
-export function createSampleDrone(): SampleAsset {
+export function createAssetDoctorTestPatient(): SampleAsset {
   const root = new THREE.Group();
-  root.name = 'Explorer_Drone_MK4';
+  root.name = 'Asset_Doctor_Test_Patient';
 
-  // Materials
-  const armorMat = new THREE.MeshStandardMaterial({
-    name: 'Mat_ArmorPlating',
-    color: 0x222b38,
-    metalness: 0.85,
-    roughness: 0.25,
+  const repairableGroup = new THREE.Group();
+  repairableGroup.name = 'Repairable_Findings';
+  root.add(repairableGroup);
+
+  const manualGroup = new THREE.Group();
+  manualGroup.name = 'Manual_Review_Findings';
+  root.add(manualGroup);
+
+  const rigGroup = new THREE.Group();
+  rigGroup.name = 'Rig_And_Animation_Control';
+  root.add(rigGroup);
+
+  const repairMat = new THREE.MeshStandardMaterial({
+    name: 'Mat_Repairable',
+    color: 0x16a34a,
+    metalness: 0.25,
+    roughness: 0.4,
+    side: THREE.DoubleSide,
   });
 
-  const accentMat = new THREE.MeshStandardMaterial({
-    name: 'Mat_HighVisOrange',
-    color: 0xf97316,
-    metalness: 0.2,
+  const warningMat = new THREE.MeshStandardMaterial({
+    name: 'Mat_ManualReview',
+    color: 0xf59e0b,
+    metalness: 0.1,
+    roughness: 0.55,
+    side: THREE.DoubleSide,
+  });
+
+  const rigMat = new THREE.MeshStandardMaterial({
+    name: 'Mat_RigControl',
+    color: 0x2563eb,
+    metalness: 0.35,
     roughness: 0.35,
   });
 
-  const engineMat = new THREE.MeshStandardMaterial({
-    name: 'Mat_TitaniumThruster',
-    color: 0x475569,
-    metalness: 0.9,
-    roughness: 0.4,
-  });
+  // ---------------------------------------------------------------------------
+  // 1) Repair target
+  // ---------------------------------------------------------------------------
+  // 3 indexed triangles:
+  // - one valid triangle
+  // - one degenerate / collinear triangle
+  // - one needle / very thin triangle
+  //
+  // Two extra vertices (9, 10) are unreferenced from the start. Removing the
+  // degenerate triangle later creates three more unreferenced vertices (3, 4, 5),
+  // giving a deterministic second-stage test for Remove Unreferenced Vertices.
+  const repairGeometry = new THREE.BufferGeometry();
+  repairGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    // Valid triangle
+    -1.20, 0.40, 0.00,
+    -0.20, 0.40, 0.00,
+    -0.70, 1.10, 0.00,
 
-  const sensorMat = new THREE.MeshStandardMaterial({
-    name: 'Mat_SensorOptics',
-    color: 0x06b6d4,
-    emissive: new THREE.Color(0x06b6d4),
-    emissiveIntensity: 0.8,
-    metalness: 0.1,
-    roughness: 0.1,
-  });
+    // Degenerate triangle: collinear
+     0.05, 0.40, 0.00,
+     0.45, 0.40, 0.00,
+     0.85, 0.40, 0.00,
 
-  // 1. Central Chassis
-  const chassisGeom = new THREE.BoxGeometry(1.6, 0.6, 2.2, 2, 2, 2);
-  const chassis = new THREE.Mesh(chassisGeom, armorMat);
-  chassis.name = 'Chassis_Main';
-  chassis.position.set(0, 1.2, 0);
-  root.add(chassis);
+    // Needle triangle
+    -1.10, 0.35, 0.80,
+     0.90, 0.35, 0.80,
+    -0.10, 0.355, 0.80,
 
-  // 2. Cockpit Canopy / Sensor Dome
-  const canopyGeom = new THREE.SphereGeometry(0.5, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2);
-  const canopy = new THREE.Mesh(canopyGeom, sensorMat);
-  canopy.name = 'Sensor_Dome';
-  canopy.position.set(0, 1.5, 0.4);
-  root.add(canopy);
+    // Intentionally unreferenced vertices
+     0.00, 1.80, 0.20,
+     0.30, 1.95, 0.30,
+  ], 3));
 
-  // 3. Left Thruster Nacelle
-  const thrusterGeom = new THREE.CylinderGeometry(0.35, 0.4, 1.4, 20);
-  const leftThruster = new THREE.Mesh(thrusterGeom, engineMat);
-  leftThruster.name = 'Thruster_Port';
-  leftThruster.rotation.x = Math.PI / 2;
-  leftThruster.position.set(-1.4, 1.2, -0.2);
-  root.add(leftThruster);
+  repairGeometry.setAttribute('uv', new THREE.Float32BufferAttribute([
+    0.0, 0.0,  1.0, 0.0,  0.5, 1.0,
+    0.0, 0.0,  0.5, 0.0,  1.0, 0.0,
+    0.0, 0.0,  1.0, 0.0,  0.5, 0.01,
+    0.25, 0.75, 0.75, 0.75,
+  ], 2));
 
-  // 4. Right Thruster Nacelle
-  const rightThruster = new THREE.Mesh(thrusterGeom.clone(), engineMat);
-  rightThruster.name = 'Thruster_Starboard';
-  rightThruster.rotation.x = Math.PI / 2;
-  rightThruster.position.set(1.4, 1.2, -0.2);
-  root.add(rightThruster);
-
-  // 5. Left Wing / Strut
-  const wingGeom = new THREE.BoxGeometry(0.9, 0.08, 0.8);
-  const leftWing = new THREE.Mesh(wingGeom, accentMat);
-  leftWing.name = 'Wing_Flap_Left';
-  leftWing.position.set(-1.0, 1.2, 0);
-  root.add(leftWing);
-
-  // 6. Right Wing / Strut
-  const rightWing = new THREE.Mesh(wingGeom.clone(), accentMat);
-  rightWing.name = 'Wing_Flap_Right';
-  rightWing.position.set(1.0, 1.2, 0);
-  root.add(rightWing);
-
-  // 7. Sensor Mast Antenna
-  const mastGeom = new THREE.CylinderGeometry(0.04, 0.04, 0.8, 12);
-  const mast = new THREE.Mesh(mastGeom, armorMat);
-  mast.name = 'Sensor_Mast';
-  mast.position.set(0, 1.9, -0.6);
-  root.add(mast);
-
-  // Hover & Banking Animation
-  const times = [0, 1.5, 3.0, 4.5, 6.0];
-  const positionValues = [
-    0, 1.2, 0,
-    0, 1.45, 0.2,
-    0, 1.2, 0,
-    0, 1.05, -0.15,
-    0, 1.2, 0,
-  ];
-  const rotationValues: number[] = [];
-  const q = new THREE.Quaternion();
-
-  const angles = [0, 0.08, 0, -0.08, 0];
-  for (const a of angles) {
-    q.setFromEuler(new THREE.Euler(a * 0.5, 0, a));
-    rotationValues.push(q.x, q.y, q.z, q.w);
-  }
-
-  const posTrack = new THREE.VectorKeyframeTrack('.position', times, positionValues);
-  const rotTrack = new THREE.QuaternionKeyframeTrack('.quaternion', times, rotationValues);
-  const hoverClip = new THREE.AnimationClip('Hover_Patrol', 6.0, [posTrack, rotTrack]);
-
-  return {
-    id: 'drone',
-    name: 'Explorer Drone MK4 (Segmented)',
-    description: 'Multi-part hard-surface asset with hierarchy, PBR materials, and hover animation.',
-    root,
-    animations: [hoverClip],
-  };
-}
-
-/**
- * Specimen containing intentional deterministic topology anomalies:
- * - 1 degenerate triangle (collinear area=0)
- * - 1 non-manifold edge (3 faces sharing edge)
- * - Boundary / open edges
- * - 1 needle / thin triangle
- */
-export function createTopologyDiagnosticSpecimen(): SampleAsset {
-  const root = new THREE.Group();
-  root.name = 'Topology_Diagnostic_Specimen';
-
-  const testMat = new THREE.MeshStandardMaterial({
-    name: 'Mat_DiagnosticSurface',
-    color: 0x64748b,
-    roughness: 0.3,
-    metalness: 0.4,
-  });
-
-  // Base platform: a 3x3 plane with normal topology
-  const planeGeom = new THREE.PlaneGeometry(3, 3, 4, 4);
-  planeGeom.rotateX(-Math.PI / 2);
-  const baseMesh = new THREE.Mesh(planeGeom, testMat);
-  baseMesh.name = 'Base_Substrate';
-  root.add(baseMesh);
-
-  // Anomaly 1: Degenerate triangle & Needle triangle
-  // Create custom geometry with 3 vertices in a straight line
-  const customGeom = new THREE.BufferGeometry();
-  const positions = new Float32Array([
-    // Triangle 0: Normal triangle
-    -1.0, 0.5, -1.0,
-     0.0, 0.5, -1.0,
-    -0.5, 1.2, -1.0,
-
-    // Triangle 1: Degenerate triangle (collinear points, area = 0)
-    0.2, 0.5, -1.0,
-    0.6, 0.5, -1.0,
-    1.0, 0.5, -1.0,
-
-    // Triangle 2: Needle / thin triangle (very high aspect ratio)
-    -1.0, 0.5, 0.5,
-     1.0, 0.5, 0.5,
-     0.0, 0.505, 0.5,
+  repairGeometry.setIndex([
+    0, 1, 2,
+    3, 4, 5,
+    6, 7, 8,
   ]);
-  const indices = new Uint16Array([
-    0, 1, 2, // Normal
-    3, 4, 5, // Degenerate!
-    6, 7, 8, // Needle!
-  ]);
+  repairGeometry.computeVertexNormals();
 
-  customGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  customGeom.setIndex(new THREE.BufferAttribute(indices, 1));
-  customGeom.computeVertexNormals();
+  const repairMesh = new THREE.Mesh(repairGeometry, repairMat);
+  repairMesh.name = 'Repair_Target_Degenerate_And_Loose_Vertices';
+  repairMesh.position.set(-1.1, 0, 0);
+  repairableGroup.add(repairMesh);
 
-  const anomalyMesh = new THREE.Mesh(customGeom, testMat);
-  anomalyMesh.name = 'Anomaly_NeedleAndDegenerate';
-  root.add(anomalyMesh);
-
-  // Anomaly 2: Non-manifold "T-junction" edge (3 triangles sharing edge along Y)
-  const nonManifoldGeom = new THREE.BufferGeometry();
-  const nmPositions = new Float32Array([
-    0, 0.5, 0, // 0 (bottom of edge)
-    0, 1.8, 0, // 1 (top of edge)
-    0.8, 1.0, 0, // 2 (fin A)
-    -0.8, 1.0, 0, // 3 (fin B)
-    0, 1.0, 0.8, // 4 (fin C - 3rd triangle sharing edge 0-1)
-  ]);
-  const nmIndices = new Uint16Array([
+  // ---------------------------------------------------------------------------
+  // 2) Diagnostic-only non-manifold control
+  // ---------------------------------------------------------------------------
+  // Three triangles deliberately share the same edge (0, 1).
+  // This finding should remain diagnostic-only until a dedicated repair strategy
+  // exists, making it useful for verifying that Heal does not "fix everything".
+  const nonManifoldGeometry = new THREE.BufferGeometry();
+  nonManifoldGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0.0, 0.25, 0.0,
+    0.0, 1.55, 0.0,
+    0.8, 0.90, 0.0,
+   -0.8, 0.90, 0.0,
+    0.0, 0.90, 0.8,
+  ], 3));
+  nonManifoldGeometry.setIndex([
     0, 1, 2,
     0, 1, 3,
-    0, 1, 4, // 3 triangles share edge (0, 1) -> Non-manifold!
+    0, 1, 4,
   ]);
-  nonManifoldGeom.setAttribute('position', new THREE.BufferAttribute(nmPositions, 3));
-  nonManifoldGeom.setIndex(new THREE.BufferAttribute(nmIndices, 1));
-  nonManifoldGeom.computeVertexNormals();
+  nonManifoldGeometry.computeVertexNormals();
 
-  const nmMesh = new THREE.Mesh(nonManifoldGeom, testMat);
-  nmMesh.name = 'Anomaly_NonManifoldEdge';
-  root.add(nmMesh);
+  const nonManifoldMesh = new THREE.Mesh(nonManifoldGeometry, warningMat);
+  nonManifoldMesh.name = 'Manual_Control_NonManifold_Edge';
+  nonManifoldMesh.position.set(1.2, 0, 0);
+  manualGroup.add(nonManifoldMesh);
 
-  return {
-    id: 'topo-specimen',
-    name: 'Topology Diagnostic Specimen',
-    description: 'Deterministic benchmark containing known degenerate triangles, non-manifold edges, and needle faces.',
-    root,
-    animations: [],
-  };
-}
+  // ---------------------------------------------------------------------------
+  // 3) Diagnostic-only zero-normal control
+  // ---------------------------------------------------------------------------
+  // Valid indexed triangle, but its normal stream is intentionally zeroed.
+  const zeroNormalGeometry = new THREE.BufferGeometry();
+  zeroNormalGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    -0.55, 0.15, 0.0,
+     0.55, 0.15, 0.0,
+     0.00, 0.95, 0.0,
+  ], 3));
+  zeroNormalGeometry.setAttribute('normal', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    0, 0, 0,
+    0, 0, 0,
+  ], 3));
+  zeroNormalGeometry.setIndex([0, 1, 2]);
 
-/**
- * Rigged skeletal robot character with bones, skinned mesh, and walk cycle with root motion
- */
-export function createRiggedRobotCharacter(): SampleAsset {
-  const root = new THREE.Group();
-  root.name = 'Rigged_Bipedal_Unit';
+  const zeroNormalMesh = new THREE.Mesh(zeroNormalGeometry, warningMat);
+  zeroNormalMesh.name = 'Manual_Control_Zero_Normals';
+  zeroNormalMesh.position.set(1.2, 0, 1.25);
+  manualGroup.add(zeroNormalMesh);
 
-  // 1. Create Bone Hierarchy
-  const rootBone = new THREE.Bone();
-  rootBone.name = 'Root';
-  rootBone.position.set(0, 0, 0);
+  // ---------------------------------------------------------------------------
+  // 4) Small rig + animation control
+  // ---------------------------------------------------------------------------
+  // Clean geometry with a tiny skeleton. One extra locator bone is deliberately
+  // unused by skin weights, so rig diagnostics still have useful evidence.
+  const rigGeometry = new THREE.BoxGeometry(0.55, 1.4, 0.45, 1, 4, 1);
+  rigGeometry.translate(0, 0.7, 0);
 
-  const hipsBone = new THREE.Bone();
-  hipsBone.name = 'Hips';
-  hipsBone.position.set(0, 1.1, 0);
-  rootBone.add(hipsBone);
-
-  const spineBone = new THREE.Bone();
-  spineBone.name = 'Spine';
-  spineBone.position.set(0, 0.6, 0);
-  hipsBone.add(spineBone);
-
-  const headBone = new THREE.Bone();
-  headBone.name = 'Head';
-  headBone.position.set(0, 0.4, 0);
-  spineBone.add(headBone);
-
-  const leftLegBone = new THREE.Bone();
-  leftLegBone.name = 'Leg_L';
-  leftLegBone.position.set(-0.35, -0.5, 0);
-  hipsBone.add(leftLegBone);
-
-  const rightLegBone = new THREE.Bone();
-  rightLegBone.name = 'Leg_R';
-  rightLegBone.position.set(0.35, -0.5, 0);
-  hipsBone.add(rightLegBone);
-
-  const bones = [rootBone, hipsBone, spineBone, headBone, leftLegBone, rightLegBone];
-  const skeleton = new THREE.Skeleton(bones);
-
-  // 2. Skinned Cylinder Body
-  const height = 2.2;
-  const segmentHeight = height / 6;
-  const geom = new THREE.CylinderGeometry(0.35, 0.35, height, 16, 6, false);
-  geom.translate(0, height / 2, 0);
-
-  // Compute skinIndices and skinWeights
-  const position = geom.attributes.position;
+  const rigPositions = rigGeometry.getAttribute('position');
   const skinIndices: number[] = [];
   const skinWeights: number[] = [];
 
-  for (let i = 0; i < position.count; i++) {
-    const y = position.getY(i);
-
-    if (y < 0.6) {
-      // Legs
-      const x = position.getX(i);
-      const boneIdx = x < 0 ? 4 : 5;
-      skinIndices.push(boneIdx, 1, 0, 0);
-      skinWeights.push(0.8, 0.2, 0, 0);
-    } else if (y < 1.4) {
-      // Hips & Spine
-      skinIndices.push(1, 2, 0, 0);
-      skinWeights.push(0.6, 0.4, 0, 0);
+  for (let i = 0; i < rigPositions.count; i++) {
+    const y = rigPositions.getY(i);
+    if (y < 0.75) {
+      skinIndices.push(0, 1, 0, 0);
+      skinWeights.push(0.85, 0.15, 0, 0);
     } else {
-      // Spine & Head
-      skinIndices.push(2, 3, 0, 0);
-      skinWeights.push(0.5, 0.5, 0, 0);
+      skinIndices.push(1, 0, 0, 0);
+      skinWeights.push(0.85, 0.15, 0, 0);
     }
   }
 
-  geom.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
-  geom.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
+  rigGeometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
+  rigGeometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
 
-  const mat = new THREE.MeshStandardMaterial({
-    name: 'Mat_BipedArmor',
-    color: 0x3b82f6,
-    metalness: 0.7,
-    roughness: 0.3,
-  });
+  const rootBone = new THREE.Bone();
+  rootBone.name = 'TestRoot';
+  rootBone.position.set(0, 0, 0);
 
-  const skinnedMesh = new THREE.SkinnedMesh(geom, mat);
-  skinnedMesh.name = 'Mesh_BipedChassis';
-  skinnedMesh.add(rootBone);
-  skinnedMesh.bind(skeleton);
-  root.add(skinnedMesh);
+  const tipBone = new THREE.Bone();
+  tipBone.name = 'TestTip';
+  tipBone.position.set(0, 0.8, 0);
+  rootBone.add(tipBone);
 
-  // Walk Cycle with Root Motion
-  const times = [0, 0.5, 1.0, 1.5, 2.0];
-  // Root translation along Z: starts at 0, advances to 1.8m
-  const rootPosValues = [
-    0, 0, 0.0,
-    0, 0, 0.45,
-    0, 0, 0.9,
-    0, 0, 1.35,
-    0, 0, 1.8,
-  ];
-  const rootPosTrack = new THREE.VectorKeyframeTrack('Root.position', times, rootPosValues);
+  const locatorBone = new THREE.Bone();
+  locatorBone.name = 'UnusedLocator';
+  locatorBone.position.set(0.35, 0.35, 0);
+  rootBone.add(locatorBone);
 
-  // Leg swings
-  const qLeft1 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.4, 0, 0));
-  const qLeft2 = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.4, 0, 0));
-  const legTimes = [0, 0.5, 1.0, 1.5, 2.0];
-  const legValues = [
-    qLeft1.x, qLeft1.y, qLeft1.z, qLeft1.w,
-    qLeft2.x, qLeft2.y, qLeft2.z, qLeft2.w,
-    qLeft1.x, qLeft1.y, qLeft1.z, qLeft1.w,
-    qLeft2.x, qLeft2.y, qLeft2.z, qLeft2.w,
-    qLeft1.x, qLeft1.y, qLeft1.z, qLeft1.w,
-  ];
-  const legTrack = new THREE.QuaternionKeyframeTrack('Leg_L.quaternion', legTimes, legValues);
+  const skeleton = new THREE.Skeleton([rootBone, tipBone, locatorBone]);
+  const rigMesh = new THREE.SkinnedMesh(rigGeometry, rigMat);
+  rigMesh.name = 'Rig_Control_SkinnedMesh';
+  rigMesh.add(rootBone);
+  rigMesh.bind(skeleton);
+  rigMesh.position.set(0.0, 0, -1.3);
+  rigGroup.add(rigMesh);
 
-  const walkClip = new THREE.AnimationClip('Locomotion_Walk_Forward', 2.0, [rootPosTrack, legTrack]);
+  const q0 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, -0.15));
+  const q1 = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0.15));
+  const q2 = new THREE.Quaternion().copy(q0);
+  const clip = new THREE.AnimationClip('Diagnostic_Bone_Sway', 2.0, [
+    new THREE.QuaternionKeyframeTrack(
+      'TestTip.quaternion',
+      [0, 1, 2],
+      [
+        q0.x, q0.y, q0.z, q0.w,
+        q1.x, q1.y, q1.z, q1.w,
+        q2.x, q2.y, q2.z, q2.w,
+      ]
+    ),
+  ]);
 
   return {
-    id: 'rigged-robot',
-    name: 'Rigged Bipedal Unit (Skeletal + Root Motion)',
-    description: 'Armature with 6 bones, SkinnedMesh, bone weights, and root translation walk cycle.',
+    id: 'test-patient',
+    name: 'Asset Doctor Test Patient',
+    description: 'Single deterministic specimen with repairable and diagnostic-only defects, plus rig and animation controls.',
     root,
-    animations: [walkClip],
+    animations: [clip],
   };
 }
