@@ -360,6 +360,8 @@ export interface ExportVerificationReport {
   status: ExportVerificationStatus;
   reasons: string[];
   byteLength: number;
+  repairCount: number;
+  repairedMeshCount: number;
   triangleCountExpected: number;
   triangleCountActual: number;
   targetTrianglesExpected: number;
