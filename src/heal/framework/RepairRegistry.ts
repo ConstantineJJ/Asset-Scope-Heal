@@ -80,11 +80,31 @@ const mergeExactDuplicateVertices: RepairOperationDefinition = {
   },
 };
 
+const normalizeSkinWeights: RepairOperationDefinition = {
+  kind: 'normalize-skin-weights',
+  issueIds: ['skin-invalid-sum'],
+  risk: 'CONDITIONAL',
+  labelKey: 'repair.operations.normalizeSkinWeights.label',
+  descriptionKey: 'repair.operations.normalizeSkinWeights.description',
+  capabilities: {
+    preview: true,
+    apply: true,
+    undo: true,
+    verify: true,
+    exportPatch: 'geometry',
+  },
+  preview: (engine, root, issue) => {
+    if (!issue.meshUuid) return null;
+    return engine.previewNormalizeSkinWeights(root, issue.meshUuid);
+  },
+};
+
 const OPERATIONS: readonly RepairOperationDefinition[] = [
   removeDegenerateTriangles,
   removeUnreferencedVertices,
   recalculateNormals,
   mergeExactDuplicateVertices,
+  normalizeSkinWeights,
 ];
 
 const BY_KIND = new Map<HealOperationKind, RepairOperationDefinition>(
