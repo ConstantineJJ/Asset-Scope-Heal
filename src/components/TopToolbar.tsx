@@ -17,6 +17,7 @@ import {
   Sun,
   TestTube2,
   Upload,
+  Download,
   Zap,
   Languages,
 } from 'lucide-react';
@@ -25,6 +26,9 @@ import { useI18n } from '../i18n';
 
 interface TopToolbarProps {
   onOpenFile: (file: File) => void;
+  onExport: () => void;
+  canExport: boolean;
+  exportBusy: boolean;
   onSelectSample: (sampleId: string) => void;
   renderMode: RenderMode;
   onSetRenderMode: (mode: RenderMode) => void;
@@ -52,6 +56,9 @@ interface TopToolbarProps {
 
 export const TopToolbar: React.FC<TopToolbarProps> = ({
   onOpenFile,
+  onExport,
+  canExport,
+  exportBusy,
   onSelectSample,
   renderMode,
   onSetRenderMode,
@@ -111,6 +118,18 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
         >
           <Upload className="w-3.5 h-3.5 text-cyan-400" />
           <span>{t('toolbar.openFile')}</span>
+        </button>
+
+        {/* Export Repaired GLB Button */}
+        <button
+          id="btn-export-file"
+          onClick={onExport}
+          disabled={!canExport || exportBusy}
+          className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-[#252830] hover:bg-[#2e323c] border border-[#373b46] text-gray-100 font-medium transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          title={canExport ? t('toolbar.exportTitle') : t('toolbar.exportDisabledTitle')}
+        >
+          <Download className="w-3.5 h-3.5 text-emerald-400" />
+          <span>{exportBusy ? t('toolbar.exporting') : t('toolbar.export')}</span>
         </button>
 
         {/* Sample Models Dropdown */}
