@@ -18,6 +18,11 @@ import { HealthEngine } from './health/HealthEngine';
 import { useI18n } from './i18n';
 import { readHealReport, saveHealReport } from './heal/HealReportStorage';
 import { SurgicalHealEngine } from './heal/SurgicalHealEngine';
+import {
+  RepairedExportService,
+  type ExportSourceDescriptor,
+  type RepairedExportResult,
+} from './export/RepairedExportService';
 import { analyzeGeometry } from './analysis/GeometryAnalyzer';
 import { analyzeMaterials } from './analysis/MaterialAnalyzer';
 import { analyzeTextures } from './analysis/TextureAnalyzer';
@@ -34,6 +39,7 @@ import type {
   HealOperationReport,
   HealPreview,
   HealUndoState,
+  ExportVerificationReport,
   LightingConfig,
   LightingPreset,
   MaterialInfo,
@@ -53,8 +59,14 @@ export function App() {
   const currentAssetRootRef = useRef<THREE.Group | null>(null);
   const currentAnimationClipsRef = useRef<THREE.AnimationClip[]>([]);
   const healEngineRef = useRef<SurgicalHealEngine | null>(null);
+  const exportServiceRef = useRef<RepairedExportService | null>(null);
+  const currentExportSourceRef = useRef<ExportSourceDescriptor | null>(null);
+  const exportResultRef = useRef<RepairedExportResult | null>(null);
   if (!healEngineRef.current) {
     healEngineRef.current = new SurgicalHealEngine();
+  }
+  if (!exportServiceRef.current) {
+    exportServiceRef.current = new RepairedExportService();
   }
 
   // App States
@@ -140,6 +152,9 @@ export function App() {
   const healBusyRef = useRef(false);
   const [healError, setHealError] = useState<string | null>(null);
   const [healStorageFailed, setHealStorageFailed] = useState(false);
+  const [exportReport, setExportReport] = useState<ExportVerificationReport | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Initialize Loader & Worker Services
   useEffect(() => {
@@ -252,7 +267,8 @@ export function App() {
       root: THREE.Group,
       clips: THREE.AnimationClip[],
       assetName: string,
-      sizeBytes?: number
+      sizeBytes?: number,
+      exportSource?: ExportSourceDescriptor
     ) => {
       const runId = ++analysisRunIdRef.current;
 
@@ -366,6 +382,10 @@ export function App() {
       setIsLoading(true);
       currentAssetRootRef.current = root;
       currentAnimationClipsRef.current = clips;
+      currentExportSourceRef.current = exportSource ?? null;
+      exportResultRef.current = null;
+      setExportReport(null);
+      setExportError(null);
       healEngineRef.current?.clear();
       setHealHistorical(true);
       setHealError(null);
@@ -433,7 +453,8 @@ export function App() {
           defaultSample.root,
           defaultSample.animations,
           'Explorer_Drone_MK4.glb',
-          1024 * 340
+          1024 * 340,
+          { kind: 'sample', sampleId: 'drone' }
         );
 
         return () => {
@@ -463,7 +484,15 @@ export function App() {
     try {
       setIsLoading(true);
       const result = await loaderServiceRef.current.loadFromFile(file);
-      await loadAsset(result.root, result.animations, result.fileName, result.fileSizeBytes);
+      await loadAsset(
+        result.root,
+        result.animations,
+        result.fileName,
+        result.fileSizeBytes,
+        result.sourceBuffer
+          ? { kind: 'buffer', fileName: result.fileName, buffer: result.sourceBuffer }
+          : undefined
+      );
     } catch (err) {
       alert(`Error loading 3D file: ${err instanceof Error ? err.message : String(err)}`);
       setIsLoading(false);
@@ -474,13 +503,13 @@ export function App() {
     let sample;
     if (sampleId === 'drone') {
       sample = createSampleDrone();
-      loadAsset(sample.root, sample.animations, 'Explorer_Drone_MK4.glb', 1024 * 340);
+      loadAsset(sample.root, sample.animations, 'Explorer_Drone_MK4.glb', 1024 * 340, { kind: 'sample', sampleId: 'drone' });
     } else if (sampleId === 'topo-specimen') {
       sample = createTopologyDiagnosticSpecimen();
-      loadAsset(sample.root, sample.animations, 'Topology_Diagnostic_Specimen.glb', 1024 * 85);
+      loadAsset(sample.root, sample.animations, 'Topology_Diagnostic_Specimen.glb', 1024 * 85, { kind: 'sample', sampleId: 'topo-specimen' });
     } else if (sampleId === 'rigged-robot') {
       sample = createRiggedRobotCharacter();
-      loadAsset(sample.root, sample.animations, 'Rigged_Bipedal_Unit.glb', 1024 * 420);
+      loadAsset(sample.root, sample.animations, 'Rigged_Bipedal_Unit.glb', 1024 * 420, { kind: 'sample', sampleId: 'rigged-robot' });
     }
   };
 
@@ -643,6 +672,9 @@ export function App() {
     healBusyRef.current = true;
     setHealBusy(true);
     setHealError(null);
+    exportResultRef.current = null;
+    setExportReport(null);
+    setExportError(null);
     try {
       const result = undo ? engine.undoLast(root) : engine.applyPending(root, fileName);
       if (!result.success) {
@@ -672,6 +704,60 @@ export function App() {
 
   const handleApplyHeal = () => performHeal(false);
   const handleUndoHeal = () => performHeal(true);
+
+  // Export Repaired Copy v0.1
+  const handleBuildRepairedExport = async () => {
+    const root = currentAssetRootRef.current;
+    const source = currentExportSourceRef.current;
+    const engine = healEngineRef.current;
+    const service = exportServiceRef.current;
+    const report = healReport;
+
+    if (!root || !source || !engine || !service || !report || healHistorical || exportBusy) {
+      setExportError(t('export.errors.unavailable'));
+      return;
+    }
+
+    const preflight = engine.validateCurrentVerifiedState(root, report);
+    if (!preflight.ok) {
+      setExportError(t(preflight.reasonKey ?? 'export.errors.unavailable'));
+      return;
+    }
+
+    setExportBusy(true);
+    setExportError(null);
+    exportResultRef.current = null;
+    setExportReport(null);
+
+    try {
+      const result = await service.exportAndVerify({
+        source,
+        currentRoot: root,
+        currentAnimations: currentAnimationClipsRef.current,
+        assetName: fileName,
+        healReport: report,
+      });
+
+      exportResultRef.current = result;
+      setExportReport(result.report);
+
+      if (result.report.status !== 'VERIFIED') {
+        setExportError(t('export.errors.verificationFailed'));
+      }
+    } catch (error) {
+      const key = error instanceof Error ? error.message : 'export.errors.failed';
+      setExportError(t(key.startsWith('export.') ? key : 'export.errors.failed'));
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const handleDownloadRepairedExport = () => {
+    const result = exportResultRef.current;
+    const service = exportServiceRef.current;
+    if (!result || !service || result.report.status !== 'VERIFIED') return;
+    service.download(result);
+  };
 
   // Animation Handlers
   const handleSelectClip = (idx: number) => {
@@ -799,6 +885,19 @@ export function App() {
           healBusy={healBusy}
           healError={healError}
           healStorageFailed={healStorageFailed}
+          exportReport={exportReport}
+          exportBusy={exportBusy}
+          exportError={exportError}
+          canExport={Boolean(
+            healReport &&
+            !healHistorical &&
+            healReport.status === 'VERIFIED' &&
+            healReport.pipeline === 'complete' &&
+            !healReport.undoneAt &&
+            currentExportSourceRef.current
+          )}
+          onBuildExport={handleBuildRepairedExport}
+          onDownloadExport={handleDownloadRepairedExport}
           onPreviewHeal={handlePreviewHeal}
           onCancelHealPreview={handleCancelHealPreview}
           onApplyHeal={handleApplyHeal}
