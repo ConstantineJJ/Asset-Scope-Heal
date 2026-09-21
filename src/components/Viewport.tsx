@@ -9,6 +9,7 @@ interface ViewportProps {
   fileName?: string;
   renderMode: RenderMode;
   triangleCount: number;
+  modelHeight: number;
 }
 
 export const Viewport: React.FC<ViewportProps> = ({
@@ -18,6 +19,7 @@ export const Viewport: React.FC<ViewportProps> = ({
   fileName,
   renderMode,
   triangleCount,
+  modelHeight,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -78,6 +80,32 @@ export const Viewport: React.FC<ViewportProps> = ({
           </span>
         </div>
       )}
+
+      {/* Subtle model-height ruler. Uses real asset units (glTF meters). */}
+      {modelHeight > 0 && (
+        <div
+          className="absolute right-3 top-1/2 -translate-y-1/2 z-10 h-36 w-12 pointer-events-none text-[9px] font-mono text-gray-400"
+          title={`Model height: ${modelHeight.toFixed(3)} m`}
+        >
+          <div className="absolute right-2 top-0 bottom-0 w-px bg-gray-500/50" />
+          {[0, 0.25, 0.5, 0.75, 1].map((fraction) => (
+            <div
+              key={fraction}
+              className="absolute right-2 flex items-center"
+              style={{ top: `${fraction * 100}%`, transform: 'translateY(-50%)' }}
+            >
+              <span className="w-2 h-px bg-gray-500/60 mr-1" />
+              {(fraction === 0 || fraction === 0.5 || fraction === 1) && (
+                <span className="whitespace-nowrap">
+                  {((1 - fraction) * modelHeight).toFixed(modelHeight >= 10 ? 1 : 2)}m
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Orientation gizmo is injected by SceneManager so it follows the live camera. */}
 
       {/* Bottom Left Navigation Hints */}
       <div className="absolute bottom-3 left-3 z-10 hidden md:flex items-center space-x-1.5 pointer-events-none text-[10px] text-gray-400 font-mono">
