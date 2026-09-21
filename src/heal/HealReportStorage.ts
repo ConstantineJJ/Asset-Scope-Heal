@@ -10,7 +10,12 @@ export function readHealReport(storage?: ReportStorage): HealOperationReport | n
     const status = (value: unknown) => ['VERIFIED', 'PARTIAL', 'REGRESSION'].includes(value as string);
     const metrics = (value: any) => value && healMetricKeys.every(key => Number.isInteger(value[key]) && value[key] >= 0);
     if (!report || report.version !== 2 ||
-        !['remove-degenerate-triangles', 'remove-unreferenced-vertices'].includes(report.operation) ||
+        ![
+          'remove-degenerate-triangles',
+          'remove-unreferenced-vertices',
+          'recalculate-normals',
+          'merge-exact-duplicate-vertices',
+        ].includes(report.operation) ||
         !['operationId', 'assetName', 'meshUuid', 'meshName', 'appliedAt'].every(key => typeof report[key] === 'string') ||
         !status(report.status) || !status(report.targetStatus) ||
         !['pending', 'complete', 'failed'].includes(report.pipeline) ||
