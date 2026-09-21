@@ -6,6 +6,7 @@ import type {
   TopologyStats,
 } from '../types';
 import { measureGeometryNormals } from '../analysis/NormalsMeasure';
+import { measureSkinWeights } from '../analysis/SkinWeightMeasure';
 
 export const healMetricKeys = [
   'triangleCount', 'vertexCount', 'degenerateTriangles', 'boundaryEdges',
@@ -15,21 +16,31 @@ export const healMetricKeys = [
 
 export function healMetrics(
   stats: TopologyStats,
-  geometry?: THREE.BufferGeometry
+  geometry?: THREE.BufferGeometry,
+  mesh?: THREE.Mesh
 ): HealMetrics {
   const base = Object.fromEntries(
     healMetricKeys.map(key => [key, stats[key]])
   ) as unknown as HealMetrics;
 
-  if (!geometry) return base;
+  const result: HealMetrics = { ...base };
 
-  const normal = measureGeometryNormals(geometry);
-  return {
-    ...base,
-    normalCount: normal.normalCount,
-    invalidNormals: normal.invalidCount,
-    missingNormals: normal.missing ? normal.vertexCount : 0,
-  };
+  if (geometry) {
+    const normal = measureGeometryNormals(geometry);
+    result.normalCount = normal.normalCount;
+    result.invalidNormals = normal.invalidCount;
+    result.missingNormals = normal.missing ? normal.vertexCount : 0;
+  }
+
+  if (mesh && (mesh as THREE.SkinnedMesh).isSkinnedMesh) {
+    const skin = measureSkinWeights(mesh);
+    if (skin.supported) {
+      result.invalidSkinWeights = skin.invalidSumCount;
+      result.zeroWeightVertices = skin.zeroWeightCount;
+    }
+  }
+
+  return result;
 }
 
 function measurementFailure(
@@ -212,6 +223,58 @@ function verifyExactDuplicateMerge(
   return { status: 'VERIFIED', reasons: [] };
 }
 
+function verifySkinWeightNormalization(
+  before: HealMetrics,
+  after: HealMetrics | null,
+  expectedFixed: number,
+  buffersMatch: boolean
+): { status: HealVerificationStatus; reasons: string[] } {
+  const unavailable = measurementFailure(after, buffersMatch);
+  if (unavailable) return unavailable;
+  const measured = after!;
+
+  const reasons: string[] = [];
+  if (!buffersMatch) reasons.push('unexpectedGeometry');
+
+  for (const key of healMetricKeys) {
+    if (measured[key] !== before[key]) reasons.push(key);
+  }
+
+  if (
+    !Number.isFinite(before.invalidSkinWeights) ||
+    !Number.isFinite(measured.invalidSkinWeights)
+  ) {
+    return {
+      status: reasons.length ? 'REGRESSION' : 'PARTIAL',
+      reasons: [...reasons, 'measurementUnavailable'],
+    };
+  }
+
+  if ((before.invalidSkinWeights ?? 0) !== expectedFixed) {
+    reasons.push('unexpectedGeometry');
+  }
+
+  if ((measured.zeroWeightVertices ?? 0) !== (before.zeroWeightVertices ?? 0)) {
+    reasons.push('zeroWeightVertices');
+  }
+
+  if (
+    measured.invalidNormals !== undefined &&
+    before.invalidNormals !== undefined &&
+    measured.invalidNormals !== before.invalidNormals
+  ) {
+    reasons.push('invalidNormals');
+  }
+
+  if (reasons.length) return { status: 'REGRESSION', reasons };
+
+  if ((measured.invalidSkinWeights ?? 0) !== 0) {
+    return { status: 'PARTIAL', reasons: ['targetRemaining'] };
+  }
+
+  return { status: 'VERIFIED', reasons: [] };
+}
+
 export function verifyHealOperation(
   operation: HealOperationKind,
   before: HealMetrics,
@@ -226,6 +289,8 @@ export function verifyHealOperation(
       return verifyNormalRecalculation(before, after, expectedAffected, buffersMatch);
     case 'merge-exact-duplicate-vertices':
       return verifyExactDuplicateMerge(before, after, expectedAffected, buffersMatch);
+    case 'normalize-skin-weights':
+      return verifySkinWeightNormalization(before, after, expectedAffected, buffersMatch);
     case 'remove-degenerate-triangles':
     default:
       return verifyDegenerateRemoval(before, after, expectedAffected, buffersMatch);
