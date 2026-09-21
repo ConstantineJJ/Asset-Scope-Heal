@@ -70,6 +70,57 @@ export class SurgicalHealEngine {
     return this.lastOperation ? structuredClone(this.lastOperation) : null;
   }
 
+  public getActiveReports(): HealOperationReport[] {
+    return this.undoStack
+      .filter((entry) => !entry.report.undoneAt)
+      .map((entry) => structuredClone(entry.report));
+  }
+
+  public getActiveVerifiedReports(): HealOperationReport[] {
+    return this.getActiveReports().filter(
+      (report) => report.status === 'VERIFIED' && report.pipeline === 'complete'
+    );
+  }
+
+  public validateCurrentVerifiedSession(
+    root: THREE.Object3D
+  ): { ok: boolean; reasonKey?: string; reports: HealOperationReport[] } {
+    const reports = this.getActiveReports();
+    if (reports.length === 0) {
+      return { ok: false, reasonKey: 'export.errors.healNotVerified', reports: [] };
+    }
+
+    if (reports.some(
+      (report) => report.status !== 'VERIFIED' || report.pipeline !== 'complete' || report.undoneAt
+    )) {
+      return { ok: false, reasonKey: 'export.errors.healNotVerified', reports };
+    }
+
+    // Only the latest transaction for a mesh can match the current final
+    // geometry. Earlier reports on the same mesh remain audit evidence.
+    const latestByMesh = new Map<string, UndoHeal>();
+    for (const entry of this.undoStack) {
+      if (!entry.report.undoneAt) latestByMesh.set(entry.meshUuid, entry);
+    }
+
+    for (const entry of latestByMesh.values()) {
+      const obj = root.getObjectByProperty('uuid', entry.meshUuid);
+      if (!obj || !(obj as THREE.Mesh).isMesh) {
+        return { ok: false, reasonKey: 'export.errors.targetMissing', reports };
+      }
+
+      const mesh = obj as THREE.Mesh;
+      if (
+        mesh.geometry.uuid !== entry.geometryUuid ||
+        !geometryMatches(mesh.geometry, entry.appliedSnapshot)
+      ) {
+        return { ok: false, reasonKey: 'export.errors.geometryChanged', reports };
+      }
+    }
+
+    return { ok: true, reports };
+  }
+
   public completeVerification(operationId: string, pipelineComplete: boolean) {
     const report = this.lastOperation;
     if (!report || report.operationId !== operationId || report.undoneAt) return;
