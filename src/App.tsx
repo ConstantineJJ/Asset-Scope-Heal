@@ -8,11 +8,7 @@ import { AnimationTimeline } from './components/AnimationTimeline';
 import { TopologyTestModal } from './components/TopologyTestModal';
 import { SceneManager } from './viewer/SceneManager';
 import { GLBLoaderService } from './loaders/GLBLoaderService';
-import {
-  createRiggedRobotCharacter,
-  createSampleDrone,
-  createTopologyDiagnosticSpecimen,
-} from './loaders/SampleModels';
+import { createAssetDoctorTestPatient } from './loaders/SampleModels';
 import { WorkerManager } from './workers/WorkerManager';
 import { HealthEngine } from './health/HealthEngine';
 import { useI18n } from './i18n';
@@ -448,14 +444,14 @@ export function App() {
           }
         }, 500);
 
-        // Load default Explorer Drone
-        const defaultSample = createSampleDrone();
+        // Load the single deterministic Asset Doctor test patient.
+        const defaultSample = createAssetDoctorTestPatient();
         loadAsset(
           defaultSample.root,
           defaultSample.animations,
-          'Explorer_Drone_MK4.glb',
-          1024 * 340,
-          { kind: 'sample', sampleId: 'drone' }
+          'Asset_Doctor_Test_Patient.glb',
+          1024 * 180,
+          { kind: 'sample', sampleId: 'test-patient' }
         );
 
         return () => {
@@ -501,17 +497,15 @@ export function App() {
   };
 
   const handleSelectSample = (sampleId: string) => {
-    let sample;
-    if (sampleId === 'drone') {
-      sample = createSampleDrone();
-      loadAsset(sample.root, sample.animations, 'Explorer_Drone_MK4.glb', 1024 * 340, { kind: 'sample', sampleId: 'drone' });
-    } else if (sampleId === 'topo-specimen') {
-      sample = createTopologyDiagnosticSpecimen();
-      loadAsset(sample.root, sample.animations, 'Topology_Diagnostic_Specimen.glb', 1024 * 85, { kind: 'sample', sampleId: 'topo-specimen' });
-    } else if (sampleId === 'rigged-robot') {
-      sample = createRiggedRobotCharacter();
-      loadAsset(sample.root, sample.animations, 'Rigged_Bipedal_Unit.glb', 1024 * 420, { kind: 'sample', sampleId: 'rigged-robot' });
-    }
+    if (sampleId !== 'test-patient') return;
+    const sample = createAssetDoctorTestPatient();
+    loadAsset(
+      sample.root,
+      sample.animations,
+      'Asset_Doctor_Test_Patient.glb',
+      1024 * 180,
+      { kind: 'sample', sampleId: 'test-patient' }
+    );
   };
 
   // Viewport Controls Handlers
