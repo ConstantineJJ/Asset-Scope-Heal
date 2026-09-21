@@ -144,6 +144,14 @@ export function HealReportPanel({
                 <span className="text-right text-gray-200">
                   {exportReport.targetDegeneratesExpected} → {exportReport.targetDegeneratesActual}
                 </span>
+                <span>{t('export.metrics.targetVertices')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.targetVerticesExpected} → {exportReport.targetVerticesActual}
+                </span>
+                <span>{t('export.metrics.unreferenced')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.targetUnreferencedExpected} → {exportReport.targetUnreferencedActual}
+                </span>
                 <span>{t('export.metrics.meshes')}</span>
                 <span className="text-right text-gray-200">
                   {exportReport.meshCountExpected} → {exportReport.meshCountActual}
