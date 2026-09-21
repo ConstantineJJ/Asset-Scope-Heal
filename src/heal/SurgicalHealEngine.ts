@@ -255,7 +255,7 @@ export class SurgicalHealEngine {
   }
 
   public undoLast(root: THREE.Object3D): HealApplyResult {
-    const undo = this.undoStack.pop();
+    const undo = this.undoStack[this.undoStack.length - 1];
     if (!undo) {
       return { success: false, reason: 'No Surgical Heal operation is available to undo.' };
     }
@@ -275,6 +275,7 @@ export class SurgicalHealEngine {
     mesh.geometry.index!.needsUpdate = true;
     mesh.geometry.computeBoundingBox();
     mesh.geometry.computeBoundingSphere();
+    this.undoStack.pop();
 
     return {
       success: true,
