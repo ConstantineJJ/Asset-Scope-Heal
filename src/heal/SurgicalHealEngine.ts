@@ -56,6 +56,36 @@ export class SurgicalHealEngine {
       : pipelineComplete ? report.targetStatus : 'PARTIAL';
   }
 
+  public validateCurrentVerifiedState(
+    root: THREE.Object3D,
+    report: HealOperationReport | null
+  ): { ok: boolean; reasonKey?: string } {
+    if (!report || report.undoneAt || report.status !== 'VERIFIED' || report.pipeline !== 'complete') {
+      return { ok: false, reasonKey: 'export.errors.healNotVerified' };
+    }
+
+    if (!this.lastOperation || this.lastOperation.operationId !== report.operationId) {
+      return { ok: false, reasonKey: 'export.errors.historicalReport' };
+    }
+
+    const undo = [...this.undoStack].reverse().find((entry) => entry.report.operationId === report.operationId);
+    if (!undo) {
+      return { ok: false, reasonKey: 'export.errors.historicalReport' };
+    }
+
+    const obj = root.getObjectByProperty('uuid', report.meshUuid);
+    if (!obj || !(obj as THREE.Mesh).isMesh) {
+      return { ok: false, reasonKey: 'export.errors.targetMissing' };
+    }
+
+    const mesh = obj as THREE.Mesh;
+    if (mesh.geometry.uuid !== undo.geometryUuid || !geometryMatches(mesh.geometry, undo.appliedSnapshot)) {
+      return { ok: false, reasonKey: 'export.errors.geometryChanged' };
+    }
+
+    return { ok: true };
+  }
+
   public clear() {
     this.pending = null;
     this.undoStack = [];
