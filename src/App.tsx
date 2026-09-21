@@ -267,8 +267,7 @@ export function App() {
       root: THREE.Group,
       clips: THREE.AnimationClip[],
       assetName: string,
-      sizeBytes?: number,
-      exportSource?: ExportSourceDescriptor
+      sizeBytes?: number
     ) => {
       const runId = ++analysisRunIdRef.current;
 
@@ -377,7 +376,8 @@ export function App() {
       root: THREE.Group,
       clips: THREE.AnimationClip[],
       assetName: string,
-      sizeBytes?: number
+      sizeBytes?: number,
+      exportSource?: ExportSourceDescriptor
     ) => {
       setIsLoading(true);
       currentAssetRootRef.current = root;
