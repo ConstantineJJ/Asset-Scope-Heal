@@ -167,8 +167,12 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
   return issues;
 }
 
-export function evaluateSkinningIssues(stats: SkinningStats): HealthIssue[] {
+export function evaluateSkinningIssues(
+  stats: SkinningStats,
+  profileId: DiagnosticProfileId = 'general'
+): HealthIssue[] {
   const issues: HealthIssue[] = [];
+  const profile = getDiagnosticProfile(profileId);
 
   if (stats.skeletonCount === 0) {
     issues.push({
@@ -196,13 +200,13 @@ export function evaluateSkinningIssues(stats: SkinningStats): HealthIssue[] {
   });
 
   // Max influences per vertex
-  if (stats.maxInfluencesPerVertex > 4) {
+  if (stats.maxInfluencesPerVertex > profile.maxBoneInfluencesWarning) {
     issues.push({
       id: 'skin-max-influences',
       category: 'Skinning',
       severity: 'WARNING',
       title: `Max bone influences: ${stats.maxInfluencesPerVertex}`,
-      description: `Vertices with up to ${stats.maxInfluencesPerVertex} active bone weights. Many mobile GPU pipelines limit hardware skinning to 4 bone influences.`,
+      description: `Vertices use up to ${stats.maxInfluencesPerVertex} active bone weights, above the ${profile.label} reference threshold of ${profile.maxBoneInfluencesWarning}.`,
       count: stats.maxInfluencesPerVertex,
     });
   } else if (stats.maxInfluencesPerVertex > 0) {
@@ -211,7 +215,7 @@ export function evaluateSkinningIssues(stats: SkinningStats): HealthIssue[] {
       category: 'Skinning',
       severity: 'OK',
       title: `Bone influences compliant (${stats.maxInfluencesPerVertex}/vertex)`,
-      description: 'Bone influence count satisfies standard 4-weight GPU skinning cache limits.',
+      description: `Bone influence count is within the ${profile.label} reference threshold (${profile.maxBoneInfluencesWarning}/vertex).`,
     });
   }
 
@@ -309,18 +313,22 @@ export function evaluateMaterialIssues(materials: MaterialInfo[]): HealthIssue[]
   return issues;
 }
 
-export function evaluateTextureIssues(textures: TextureInfo[]): HealthIssue[] {
+export function evaluateTextureIssues(
+  textures: TextureInfo[],
+  profileId: DiagnosticProfileId = 'general'
+): HealthIssue[] {
   const issues: HealthIssue[] = [];
+  const profile = getDiagnosticProfile(profileId);
   let nonPowerOfTwoCount = 0;
-  let texturesOver4096 = 0;
+  let texturesOverThreshold = 0;
 
   function isPowerOfTwo(n: number) {
     return n > 0 && (n & (n - 1)) === 0;
   }
 
   for (const t of textures) {
-    if (t.width > 4096 || t.height > 4096) {
-      texturesOver4096++;
+    if (t.width > profile.textureDimensionWarning || t.height > profile.textureDimensionWarning) {
+      texturesOverThreshold++;
     }
     if (t.width > 0 && t.height > 0) {
       if (!isPowerOfTwo(t.width) || !isPowerOfTwo(t.height)) {
@@ -329,14 +337,14 @@ export function evaluateTextureIssues(textures: TextureInfo[]): HealthIssue[] {
     }
   }
 
-  if (texturesOver4096 > 0) {
+  if (texturesOverThreshold > 0) {
     issues.push({
       id: 'tex-over-4096',
       category: 'Textures',
       severity: 'WARNING',
-      title: `Textures above 4096 px: ${texturesOver4096}`,
-      description: `${texturesOver4096} texture(s) have width or height exceeding 4096 pixels. Exceeds hardware texture limits on various mobile GPUs.`,
-      count: texturesOver4096,
+      title: `Textures above ${profile.textureDimensionWarning}px: ${texturesOverThreshold}`,
+      description: `${texturesOverThreshold} texture(s) exceed the ${profile.label} reference dimension of ${profile.textureDimensionWarning}px. This is a target-fit warning, not a structural texture defect.`,
+      count: texturesOverThreshold,
     });
   }
 
@@ -351,13 +359,13 @@ export function evaluateTextureIssues(textures: TextureInfo[]): HealthIssue[] {
     });
   }
 
-  if (textures.length > 0 && texturesOver4096 === 0) {
+  if (textures.length > 0 && texturesOverThreshold === 0) {
     issues.push({
       id: 'tex-dimensions-ok',
       category: 'Textures',
       severity: 'OK',
       title: 'Texture dimensions within safe limits',
-      description: `All ${textures.length} texture(s) stay at or below 4096px.`,
+      description: `All ${textures.length} texture(s) stay at or below the ${profile.label} reference dimension of ${profile.textureDimensionWarning}px.`,
       count: textures.length,
     });
   }
@@ -402,21 +410,25 @@ export interface HealthAggregateParams {
 
 
 function evaluateIntegrity(summary: AssetSummary): HealthIssue[] {
-  const numericValues = [
+  const countValues = [
     summary.nodeCount,
     summary.meshCount,
     summary.vertexCount,
     summary.triangleCount,
     summary.materialCount,
     summary.textureCount,
-    ...summary.boundingBox.min,
-    ...summary.boundingBox.max,
     ...summary.boundingBox.size,
-    ...summary.boundingBox.center,
     summary.boundingBox.diagonal,
   ];
+  const coordinateValues = [
+    ...summary.boundingBox.min,
+    ...summary.boundingBox.max,
+    ...summary.boundingBox.center,
+  ];
 
-  const hasInvalidNumber = numericValues.some((value) => !Number.isFinite(value) || value < 0);
+  const hasInvalidNumber =
+    countValues.some((value) => !Number.isFinite(value) || value < 0) ||
+    coordinateValues.some((value) => !Number.isFinite(value));
 
   if (hasInvalidNumber) {
     return [{
@@ -460,6 +472,48 @@ function evaluateIntegrity(summary: AssetSummary): HealthIssue[] {
     suggestedAction: 'No action required.',
     repairability: 'NONE',
   }];
+}
+
+function evaluateProfileExpectations(
+  summary: AssetSummary,
+  profileId: DiagnosticProfileId
+): HealthIssue[] {
+  const profile = getDiagnosticProfile(profileId);
+  const issues: HealthIssue[] = [];
+
+  if (profile.expectsRig === true && summary.skeletonCount === 0) {
+    issues.push({
+      id: 'fitness-rig-expected-missing',
+      category: 'Skeleton',
+      severity: 'WARNING',
+      layer: 'Fitness',
+      title: 'Rig expected by diagnostic profile',
+      description: `${profile.label} expects a skeletal rig, but none was detected.`,
+      evidence: `skeletonCount=${summary.skeletonCount}, profile=${profile.label}`,
+      whyItMatters: 'The asset may be structurally valid, but it may not satisfy the intended character workflow.',
+      suggestedAction: 'Confirm the intended use. Add or restore a rig only if this asset is meant to be skeletal.',
+      repairability: 'MANUAL',
+      profileDependent: true,
+    });
+  }
+
+  if (profile.expectsAnimations === true && summary.clipCount === 0) {
+    issues.push({
+      id: 'fitness-animation-expected-missing',
+      category: 'Animations',
+      severity: 'WARNING',
+      layer: 'Fitness',
+      title: 'Animation clips expected by diagnostic profile',
+      description: `${profile.label} expects animation clips, but none were detected.`,
+      evidence: `clipCount=${summary.clipCount}, profile=${profile.label}`,
+      whyItMatters: 'The file can still be healthy, but it may not be ready for the intended animated-character workflow.',
+      suggestedAction: 'Confirm whether animation is expected before changing the asset.',
+      repairability: 'MANUAL',
+      profileDependent: true,
+    });
+  }
+
+  return issues;
 }
 
 function defaultLayer(issue: HealthIssue): DiagnosticLayer {
@@ -550,10 +604,13 @@ export class HealthEngine {
     issues.push(...evaluateMaterialIssues(params.materials));
 
     // 2. Textures
-    issues.push(...evaluateTextureIssues(params.textures));
+    issues.push(...evaluateTextureIssues(params.textures, profileId));
 
     // 3. Skeleton / Skinning
-    issues.push(...evaluateSkinningIssues(params.skeleton));
+    issues.push(...evaluateSkinningIssues(params.skeleton, profileId));
+
+    // Diagnostic Core v1 — Layer 3: profile-dependent Fitness expectations.
+    issues.push(...evaluateProfileExpectations(params.summary, profileId));
 
     // 4. Transforms
     if (params.transforms && Array.isArray(params.transforms)) {

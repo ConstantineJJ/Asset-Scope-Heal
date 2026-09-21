@@ -76,8 +76,8 @@ export function analyzePerformance(
       id: 'perf-ultra-large-textures',
       category: 'Textures',
       severity: 'WARNING',
-      title: 'Textures exceeding profile.textureDimensionWarningpx detected',
-      description: `${ultraLargeTextureCount} texture(s) have dimension > profile.textureDimensionWarning px. May exhaust mobile GPU memory limits.`,
+      title: `Textures exceeding ${profile.textureDimensionWarning}px detected`,
+      description: `${ultraLargeTextureCount} texture(s) exceed the ${profile.label} reference texture dimension of ${profile.textureDimensionWarning}px.`,
       count: ultraLargeTextureCount,
     });
   }
@@ -88,7 +88,7 @@ export function analyzePerformance(
       category: 'Textures',
       severity: 'INFO',
       title: 'Textures above 2048px detected',
-      description: `${largeTextureCount} texture(s) have 4K (profile.textureDimensionWarningpx) resolution. Ensure target platforms have adequate VRAM.`,
+      description: `${largeTextureCount} texture(s) exceed 2048px but remain within the ${profile.label} reference limit of ${profile.textureDimensionWarning}px.`,
       count: largeTextureCount,
     });
   }
