@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { BoundsCalculator, AccurateBoundsResult } from './BoundsCalculator';
 
 export class CameraController {
   public camera: THREE.PerspectiveCamera;
   public controls: OrbitControls;
-  private defaultTarget: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
+  public lastBoundsResult: AccurateBoundsResult | null = null;
+  public lastFramingDiagnostics: Record<string, any> = {};
 
   constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
     this.camera = camera;
@@ -13,35 +15,194 @@ export class CameraController {
     this.controls.dampingFactor = 0.08;
     this.controls.screenSpacePanning = true;
     this.controls.minDistance = 0.05;
-    this.controls.maxDistance = 5000;
+    this.controls.maxDistance = 50000;
   }
 
-  public frameObject(object: THREE.Object3D, offsetFactor: number = 1.35) {
-    const box = new THREE.Box3().setFromObject(object);
-    if (box.isEmpty()) return;
+  /**
+   * Frames an object using the deterministic 8-step framing pipeline with accurate bounds.
+   */
+  public frameObject(object: THREE.Object3D, offsetFactor: number = 1.35): AccurateBoundsResult {
+    // 1. Calculate valid final world-space bounds
+    const boundsResult = BoundsCalculator.computeAccurateWorldBounds(object);
+    this.lastBoundsResult = boundsResult;
 
-    const size = new THREE.Vector3();
-    box.getSize(size);
+    const { box, sphere, isValid, warning } = boundsResult;
+
+    if (!isValid) {
+      console.warn(`[AssetScope CameraController] Invalid bounds encountered during frameObject: ${warning}. Using safe fallback.`);
+    }
+
+    // 2. Derive center and model size
     const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
     box.getCenter(center);
+    box.getSize(size);
 
-    const maxDim = Math.max(size.x, size.y, size.z);
+    const maxDim = Math.max(size.x, Math.max(size.y, size.z), 0.1);
     const fov = this.camera.fov * (Math.PI / 180);
     let cameraDistance = (maxDim / 2) / Math.tan(fov / 2);
-    cameraDistance *= offsetFactor;
+    cameraDistance = Math.max(cameraDistance * offsetFactor, 0.5);
 
-    // Adjust near / far clipping planes sensibly based on bounding volume
-    this.camera.near = Math.max(0.01, maxDim / 1000);
-    this.camera.far = Math.max(1000, cameraDistance * 20);
-    this.camera.updateProjectionMatrix();
+    // 3. Update OrbitControls.target to the new center
+    this.controls.target.copy(center);
 
-    // Position camera diagonally elevated looking at center
+    // 4. Position camera at a valid distance
     const dir = new THREE.Vector3(1, 0.75, 1.25).normalize();
     this.camera.position.copy(center).add(dir.multiplyScalar(cameraDistance));
 
-    this.defaultTarget.copy(center);
-    this.controls.target.copy(center);
+    // 5. Update near/far clipping planes adaptively
+    this.camera.near = Math.max(0.01, maxDim / 1000);
+    this.camera.far = Math.max(1000, cameraDistance * 30);
+
+    // 6. Call camera.updateProjectionMatrix()
+    this.camera.updateProjectionMatrix();
+
+    // 7. Call camera.updateMatrixWorld(true)
+    this.camera.updateMatrixWorld(true);
+
+    // 8. Call controls.update()
     this.controls.update();
+
+    // Verify that the bounding sphere is inside the camera frustum
+    const frustum = new THREE.Frustum();
+    const projScreenMatrix = new THREE.Matrix4();
+    projScreenMatrix.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(projScreenMatrix);
+    const isInFrustum = frustum.intersectsSphere(sphere);
+
+    this.lastFramingDiagnostics = {
+      objectName: object.name || 'unnamed',
+      objectType: object.type,
+      boxMin: [box.min.x, box.min.y, box.min.z],
+      boxMax: [box.max.x, box.max.y, box.max.z],
+      center: [center.x, center.y, center.z],
+      size: [size.x, size.y, size.z],
+      sphereRadius: sphere.radius,
+      cameraPos: [this.camera.position.x, this.camera.position.y, this.camera.position.z],
+      cameraTarget: [this.controls.target.x, this.controls.target.y, this.controls.target.z],
+      cameraNear: this.camera.near,
+      cameraFar: this.camera.far,
+      cameraDistanceToCenter: this.camera.position.distanceTo(center),
+      isInFrustum,
+      isValid,
+    };
+
+    console.log('[AssetScope AutoFrame Diagnostics]', this.lastFramingDiagnostics);
+
+    return boundsResult;
+  }
+
+  /**
+   * Frames raw unskinned Box3 bounds as a diagnostic option.
+   */
+  public frameRawBounds(object: THREE.Object3D, offsetFactor: number = 1.35) {
+    object.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(object);
+    if (box.isEmpty()) {
+      console.warn('[AssetScope FrameRawBounds] Raw box is empty.');
+      return;
+    }
+
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    box.getCenter(center);
+    box.getSize(size);
+
+    const maxDim = Math.max(size.x, Math.max(size.y, size.z), 0.1);
+    const fov = this.camera.fov * (Math.PI / 180);
+    const cameraDistance = Math.max(((maxDim / 2) / Math.tan(fov / 2)) * offsetFactor, 0.5);
+
+    this.controls.target.copy(center);
+    const dir = new THREE.Vector3(1, 0.75, 1.25).normalize();
+    this.camera.position.copy(center).add(dir.multiplyScalar(cameraDistance));
+
+    this.camera.near = Math.max(0.01, maxDim / 1000);
+    this.camera.far = Math.max(1000, cameraDistance * 30);
+    this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld(true);
+    this.controls.update();
+
+    console.log('[AssetScope FrameRawBounds]', {
+      center: [center.x, center.y, center.z],
+      size: [size.x, size.y, size.z],
+      camPos: [this.camera.position.x, this.camera.position.y, this.camera.position.z],
+    });
+  }
+
+  /**
+   * Instruments and focuses a selected Object3D (Mesh, SkinnedMesh, Bone, Group).
+   */
+  public focusSelectedObject(object: THREE.Object3D, offsetFactor: number = 1.6) {
+    const camPosBefore = this.camera.position.clone();
+    const camTargetBefore = this.controls.target.clone();
+
+    // 1. Calculate valid final world-space bounds
+    const boundsResult = BoundsCalculator.computeAccurateWorldBounds(object);
+    const { box, sphere, isValid, warning } = boundsResult;
+
+    if (!isValid) {
+      console.warn(`[AssetScope Focus Diagnostics] Invalid bounds for selected object: ${warning}`);
+    }
+
+    // 2. Derive center and model size
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    box.getCenter(center);
+    box.getSize(size);
+
+    const maxDim = Math.max(size.x, Math.max(size.y, size.z), 0.2);
+    const fov = this.camera.fov * (Math.PI / 180);
+    let cameraDistance = (maxDim / 2) / Math.tan(fov / 2);
+    cameraDistance = Math.max(cameraDistance * offsetFactor, 0.3);
+
+    // 3. Update OrbitControls.target to the new center
+    this.controls.target.copy(center);
+
+    // 4. Position camera at a valid distance (maintain current relative angle)
+    const currentDir = new THREE.Vector3().subVectors(camPosBefore, camTargetBefore);
+    if (currentDir.lengthSq() < 0.0001) {
+      currentDir.set(1, 0.75, 1.25);
+    }
+    currentDir.normalize();
+    this.camera.position.copy(center).add(currentDir.multiplyScalar(cameraDistance));
+
+    // 5. Update near/far
+    this.camera.near = Math.max(0.01, maxDim / 1000);
+    this.camera.far = Math.max(1000, cameraDistance * 30);
+
+    // 6. Call camera.updateProjectionMatrix()
+    this.camera.updateProjectionMatrix();
+
+    // 7. Call camera.updateMatrixWorld(true)
+    this.camera.updateMatrixWorld(true);
+
+    // 8. Call controls.update()
+    this.controls.update();
+
+    const focusLog = {
+      selectedObjectName: object.name || 'unnamed',
+      selectedObjectUUID: object.uuid,
+      selectedObjectType: object.type,
+      isSkinnedMesh: (object as THREE.SkinnedMesh).isSkinnedMesh || false,
+      isBone: (object as THREE.Bone).isBone || false,
+      isMesh: (object as THREE.Mesh).isMesh || false,
+      isGroup: object instanceof THREE.Group,
+      computedBoxMin: [box.min.x, box.min.y, box.min.z],
+      computedBoxMax: [box.max.x, box.max.y, box.max.z],
+      computedCenter: [center.x, center.y, center.z],
+      computedSize: [size.x, size.y, size.z],
+      boundingSphereCenter: [sphere.center.x, sphere.center.y, sphere.center.z],
+      boundingSphereRadius: sphere.radius,
+      cameraPositionBefore: [camPosBefore.x, camPosBefore.y, camPosBefore.z],
+      cameraTargetBefore: [camTargetBefore.x, camTargetBefore.y, camTargetBefore.z],
+      cameraPositionAfter: [this.camera.position.x, this.camera.position.y, this.camera.position.z],
+      cameraTargetAfter: [this.controls.target.x, this.controls.target.y, this.controls.target.z],
+      cameraNear: this.camera.near,
+      cameraFar: this.camera.far,
+      orbitControlsUpdated: true,
+    };
+
+    console.log('[AssetScope Focus in Viewport Diagnostics]', focusLog);
   }
 
   public focusPosition(point: [number, number, number], targetDist?: number) {
@@ -51,6 +212,7 @@ export class CameraController {
 
     this.controls.target.copy(target);
     this.camera.position.copy(target).add(currentDir.multiplyScalar(dist));
+    this.camera.updateMatrixWorld(true);
     this.controls.update();
   }
 
@@ -77,6 +239,7 @@ export class CameraController {
         break;
       }
     }
+    this.camera.updateMatrixWorld(true);
     this.controls.update();
   }
 

@@ -133,9 +133,19 @@ export class RenderModeManager {
             polygonOffsetFactor: -1,
             polygonOffsetUnits: -1,
           });
-          const wireClone = new THREE.Mesh(mesh.geometry, wireMat);
-          wireClone.matrixAutoUpdate = false;
-          wireClone.matrix.copy(mesh.matrixWorld);
+          let wireClone: THREE.Mesh;
+          if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
+            const sm = mesh as THREE.SkinnedMesh;
+            const skinnedClone = new THREE.SkinnedMesh(sm.geometry, wireMat);
+            if (sm.skeleton) {
+              skinnedClone.bind(sm.skeleton, sm.bindMatrix);
+            }
+            wireClone = skinnedClone;
+          } else {
+            wireClone = new THREE.Mesh(mesh.geometry, wireMat);
+            wireClone.matrixAutoUpdate = false;
+            wireClone.matrix.copy(mesh.matrixWorld);
+          }
           this.overlayGroup.add(wireClone);
           break;
         }
@@ -213,9 +223,19 @@ export class RenderModeManager {
             transparent: true,
             opacity: 0.6,
           });
-          const wireClone = new THREE.Mesh(mesh.geometry, wireMat);
-          wireClone.matrixAutoUpdate = false;
-          wireClone.matrix.copy(mesh.matrixWorld);
+          let wireClone: THREE.Mesh;
+          if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
+            const sm = mesh as THREE.SkinnedMesh;
+            const skinnedClone = new THREE.SkinnedMesh(sm.geometry, wireMat);
+            if (sm.skeleton) {
+              skinnedClone.bind(sm.skeleton, sm.bindMatrix);
+            }
+            wireClone = skinnedClone;
+          } else {
+            wireClone = new THREE.Mesh(mesh.geometry, wireMat);
+            wireClone.matrixAutoUpdate = false;
+            wireClone.matrix.copy(mesh.matrixWorld);
+          }
           this.overlayGroup.add(wireClone);
           break;
         }

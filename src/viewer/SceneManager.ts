@@ -3,6 +3,7 @@ import { CameraController } from './CameraController';
 import { ExplodedViewController } from './ExplodedViewController';
 import { LightingManager } from './LightingManager';
 import { RenderModeManager } from './RenderModeManager';
+import { BoundsCalculator, AccurateBoundsResult } from './BoundsCalculator';
 import type { LightingConfig, LightingPreset, RenderMode } from '../types';
 
 export interface SceneManagerCallbacks {
@@ -164,6 +165,9 @@ export class SceneManager {
     }
   }
 
+  public lastMeshDiagnostics: Array<Record<string, any>> = [];
+  public lastWholeModelInspection: Record<string, any> = {};
+
   public setAsset(assetRoot: THREE.Group, clips: THREE.AnimationClip[] = []) {
     // 1. Cleanly dispose previous asset
     this.disposeCurrentAsset();
@@ -171,33 +175,127 @@ export class SceneManager {
     this.currentAssetRoot = assetRoot;
     this.scene.add(this.currentAssetRoot);
 
-    // Register meshes with render mode manager
+    // Ensure root and children are visible, on default layer, with updated matrices
+    assetRoot.visible = true;
+    assetRoot.layers.set(0);
+    assetRoot.updateMatrixWorld(true);
+
+    const meshDiagnostics: Array<Record<string, any>> = [];
+
+    // Instrument and verify all loaded meshes & skinned meshes
     assetRoot.traverse((obj) => {
+      // Diagnostic verification: ensure no parent or child is accidentally hidden
+      obj.visible = true;
+      obj.layers.set(0);
+
       if ((obj as THREE.Mesh).isMesh) {
-        this.renderModeManager.registerMesh(obj as THREE.Mesh);
+        const mesh = obj as THREE.Mesh;
+        const isSkinned = (mesh as THREE.SkinnedMesh).isSkinnedMesh;
+
+        // Ensure skeleton matrices are up-to-date
+        if (isSkinned) {
+          const sm = mesh as THREE.SkinnedMesh;
+          if (sm.skeleton) {
+            for (let i = 0; i < sm.skeleton.bones.length; i++) {
+              if (sm.skeleton.bones[i]) {
+                sm.skeleton.bones[i].updateMatrixWorld(true);
+              }
+            }
+            sm.skeleton.update();
+          }
+          // Compute and fix bounding sphere for frustum culling
+          const skinnedBox = BoundsCalculator.computeSkinnedMeshWorldBounds(sm);
+          BoundsCalculator.fixSkinnedMeshFrustumSphere(sm, skinnedBox);
+        } else {
+          if (mesh.geometry) {
+            mesh.geometry.computeBoundingBox();
+            mesh.geometry.computeBoundingSphere();
+          }
+        }
+
+        // Register with render mode manager
+        this.renderModeManager.registerMesh(mesh);
+
+        // Collect exact requested debug instrumentation
+        const geom = mesh.geometry;
+        const mat = mesh.material;
+        const matArray = Array.isArray(mat) ? mat : [mat];
+
+        meshDiagnostics.push({
+          name: mesh.name || 'unnamed_mesh',
+          type: mesh.type,
+          visible: mesh.visible,
+          matrixWorld: Array.from(mesh.matrixWorld.elements),
+          position: [mesh.position.x, mesh.position.y, mesh.position.z],
+          rotation: [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z],
+          scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
+          geometryVertexCount: geom?.attributes.position ? geom.attributes.position.count : 0,
+          materialExistence: Boolean(mat),
+          materialVisible: matArray.every((m) => m && m.visible),
+          frustumCulled: mesh.frustumCulled,
+          boundingBox: geom?.boundingBox
+            ? {
+                min: [geom.boundingBox.min.x, geom.boundingBox.min.y, geom.boundingBox.min.z],
+                max: [geom.boundingBox.max.x, geom.boundingBox.max.y, geom.boundingBox.max.z],
+              }
+            : null,
+          boundingSphere: geom?.boundingSphere
+            ? {
+                center: [geom.boundingSphere.center.x, geom.boundingSphere.center.y, geom.boundingSphere.center.z],
+                radius: geom.boundingSphere.radius,
+              }
+            : null,
+        });
       }
     });
+
+    this.lastMeshDiagnostics = meshDiagnostics;
+    console.log('[AssetScope Loaded Meshes Instrumentation]', meshDiagnostics);
 
     // 2. Exploded view controller registration
     this.explodedViewController.registerAsset(assetRoot);
 
-    // 3. Align model to ground & calculate bounds
-    const box = new THREE.Box3().setFromObject(assetRoot);
-    if (!box.isEmpty()) {
-      // Offset so base sits on Y = 0 if not far off
-      const minY = box.min.y;
-      assetRoot.position.y -= minY;
-      assetRoot.updateMatrixWorld(true);
+    // 3. Ground alignment: deterministic sequence:
+    // load -> initialize matrices -> calculate bounds -> apply alignment -> update matrices -> recalculate bounds -> frame camera
+    assetRoot.updateMatrixWorld(true);
+    const initialBounds = BoundsCalculator.computeAccurateWorldBounds(assetRoot);
 
-      // Recreate bounding box helper
-      const updatedBox = new THREE.Box3().setFromObject(assetRoot);
-      this.bboxHelper = new THREE.Box3Helper(updatedBox, new THREE.Color(0xf59e0b));
+    if (initialBounds.isValid) {
+      const minY = initialBounds.box.min.y;
+      // Only align if base is offset from 0 and within sensible limits (< 50,000)
+      if (Math.abs(minY) > 0.001 && Math.abs(minY) < 50000) {
+        assetRoot.position.y -= minY;
+      }
+    } else {
+      console.warn('[AssetScope GroundAlignment] Initial bounds invalid or extreme, skipping ground shift:', initialBounds.warning);
+    }
+
+    // Update matrices again after alignment
+    assetRoot.updateMatrixWorld(true);
+    assetRoot.traverse((obj) => {
+      if ((obj as THREE.SkinnedMesh).isSkinnedMesh) {
+        const sm = obj as THREE.SkinnedMesh;
+        if (sm.skeleton) {
+          for (let i = 0; i < sm.skeleton.bones.length; i++) {
+            if (sm.skeleton.bones[i]) sm.skeleton.bones[i].updateMatrixWorld(true);
+          }
+          sm.skeleton.update();
+        }
+      }
+    });
+
+    // Recalculate final bounds
+    const finalBounds = BoundsCalculator.computeAccurateWorldBounds(assetRoot);
+
+    // Recreate bounding box helper with final bounds
+    if (!finalBounds.box.isEmpty()) {
+      this.bboxHelper = new THREE.Box3Helper(finalBounds.box, new THREE.Color(0xf59e0b));
       this.bboxHelper.name = '__ascope_internal_bbox';
       this.bboxHelper.visible = this.isBboxVisible;
       this.scene.add(this.bboxHelper);
 
       if (this.gridHelper) {
-        const size = updatedBox.getSize(new THREE.Vector3()).length();
+        const size = finalBounds.box.getSize(new THREE.Vector3()).length();
         const gridScale = Math.max(1, Math.ceil(size / 15));
         this.gridHelper.scale.set(gridScale, 1, gridScale);
       }
@@ -216,11 +314,36 @@ export class SceneManager {
       this.playAnimationClip(0);
     }
 
-    // 6. Camera auto-frame
-    this.cameraController.frameObject(assetRoot, 1.4);
+    // 6. Camera auto-frame using FINAL bounds
+    const frameResult = this.cameraController.frameObject(assetRoot, 1.4);
 
     // Reapply current render mode
     this.renderModeManager.applyMode(this.renderModeManager.getMode(), assetRoot);
+
+    // Overall Asset Inspection Log
+    const rootPos = assetRoot.position;
+    const rootRot = assetRoot.rotation;
+    const rootScale = assetRoot.scale;
+    const center = frameResult.sphere.center;
+    const camPos = this.camera.position;
+
+    this.lastWholeModelInspection = {
+      rootPosition: [rootPos.x, rootPos.y, rootPos.z],
+      rootRotation: [rootRot.x, rootRot.y, rootRot.z],
+      rootScale: [rootScale.x, rootScale.y, rootScale.z],
+      calculatedWholeModelBox3Min: [finalBounds.box.min.x, finalBounds.box.min.y, finalBounds.box.min.z],
+      calculatedWholeModelBox3Max: [finalBounds.box.max.x, finalBounds.box.max.y, finalBounds.box.max.z],
+      boundingSphereCenter: [finalBounds.sphere.center.x, finalBounds.sphere.center.y, finalBounds.sphere.center.z],
+      boundingSphereRadius: finalBounds.sphere.radius,
+      cameraPosition: [camPos.x, camPos.y, camPos.z],
+      cameraTarget: [this.cameraController.controls.target.x, this.cameraController.controls.target.y, this.cameraController.controls.target.z],
+      cameraNear: this.camera.near,
+      cameraFar: this.camera.far,
+      distanceCameraToModelCenter: camPos.distanceTo(center),
+      diagnostics: finalBounds.diagnostics,
+    };
+
+    console.log('[AssetScope Whole-Model Inspection]', this.lastWholeModelInspection);
   }
 
   public playAnimationClip(clipIndex: number) {
@@ -325,7 +448,15 @@ export class SceneManager {
     }
     const obj = this.currentAssetRoot.getObjectByProperty('uuid', this.selectedMeshUuid);
     if (obj) {
-      this.cameraController.frameObject(obj, 1.6);
+      this.cameraController.focusSelectedObject(obj, 1.6);
+    } else {
+      console.warn(`[AssetScope Focus] Object with UUID ${this.selectedMeshUuid} not found in scene.`);
+    }
+  }
+
+  public frameRawBounds() {
+    if (this.currentAssetRoot) {
+      this.cameraController.frameRawBounds(this.currentAssetRoot);
     }
   }
 

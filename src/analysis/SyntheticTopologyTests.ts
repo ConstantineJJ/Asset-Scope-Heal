@@ -1,4 +1,6 @@
+import * as THREE from 'three';
 import { analyzeMeshTopology, type RawMeshData } from './TopologyAnalyzer';
+import { BoundsCalculator } from '../viewer/BoundsCalculator';
 
 export interface TopologyTestResult {
   name: string;
@@ -266,6 +268,57 @@ export function runSyntheticTopologyTests(): TopologyTestResult[] {
       expected: 'At least 1 non-manifold edge',
       actual: `${stats.nonManifoldEdges} non-manifold edge(s)`,
       details: passed ? 'Passed deterministically.' : 'Failed to identify non-manifold condition.',
+    });
+  }
+
+  // 8. SkinnedMesh World Bounds Test
+  {
+    const root = new THREE.Group();
+    const boneA = new THREE.Bone();
+    boneA.position.set(0, 0, 0);
+    const boneB = new THREE.Bone();
+    boneB.position.set(0, 10, 0);
+    boneA.add(boneB);
+
+    const skeleton = new THREE.Skeleton([boneA, boneB]);
+    const geom = new THREE.BoxGeometry(1, 1, 1);
+    const skinIndices = [0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
+    const skinWeights = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
+    geom.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
+    geom.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
+
+    const skinnedMesh = new THREE.SkinnedMesh(geom, new THREE.MeshBasicMaterial());
+    skinnedMesh.add(boneA);
+    skinnedMesh.bind(skeleton);
+    root.add(skinnedMesh);
+
+    const bounds = BoundsCalculator.computeAccurateWorldBounds(root);
+    const passed = bounds.isValid && !bounds.diagnostics.hasNaN && !bounds.diagnostics.hasInfinity && bounds.box.max.y >= 9.5;
+
+    results.push({
+      name: 'Rigged SkinnedMesh World Bounds Test',
+      description: 'Verifies world-space bounds evaluation takes skeleton and bone matrices into account',
+      passed,
+      expected: 'Valid bounds with max.y >= 9.5 and no NaN/Inf',
+      actual: `Valid: ${bounds.isValid}, max.y: ${bounds.box.max.y.toFixed(2)}, hasNaN: ${bounds.diagnostics.hasNaN}`,
+      details: passed ? 'Passed deterministically.' : 'Failed to compute accurate skinned bounds.',
+    });
+  }
+
+  // 9. Bone Selection & Focus Bounds Test
+  {
+    const bone = new THREE.Bone();
+    bone.position.set(5, 12, -3);
+    const bounds = BoundsCalculator.computeBoneBounds(bone);
+    const passed = bounds.isValid && bounds.box.containsPoint(new THREE.Vector3(5, 12, -3));
+
+    results.push({
+      name: 'Bone Focus Bounds Test',
+      description: 'Verifies focus bounds calculation for non-drawable Bone objects',
+      passed,
+      expected: 'Valid non-empty box enclosing bone world position (5, 12, -3)',
+      actual: `Valid: ${bounds.isValid}, center: [${bounds.box.getCenter(new THREE.Vector3()).toArray().map(v => v.toFixed(1)).join(', ')}]`,
+      details: passed ? 'Passed deterministically.' : 'Failed to enclose bone position.',
     });
   }
 

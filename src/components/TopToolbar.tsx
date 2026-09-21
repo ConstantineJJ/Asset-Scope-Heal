@@ -30,6 +30,7 @@ interface TopToolbarProps {
   onSetLightingPreset: (preset: LightingPreset) => void;
   onFrameAll: () => void;
   onFocusSelected: () => void;
+  onFrameRawBounds?: () => void;
   onResetCamera: (preset: 'perspective' | 'front' | 'top' | 'right') => void;
   toggles: {
     grid: boolean;
@@ -56,6 +57,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
   onSetLightingPreset,
   onFrameAll,
   onFocusSelected,
+  onFrameRawBounds,
   onResetCamera,
   toggles,
   onToggleHelper,
@@ -224,6 +226,15 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
           >
             <Orbit className="w-3.5 h-3.5" />
           </button>
+          {onFrameRawBounds && (
+            <button
+              onClick={onFrameRawBounds}
+              className="px-1.5 py-0.5 text-[9px] uppercase font-mono tracking-wider text-amber-400 hover:text-amber-200 hover:bg-[#282c35] rounded border border-amber-500/30"
+              title="Debug: Frame Raw (Unskinned) Bounds"
+            >
+              Raw
+            </button>
+          )}
           <div className="h-3 w-px bg-[#323642]" />
           <button
             onClick={() => onResetCamera('perspective')}

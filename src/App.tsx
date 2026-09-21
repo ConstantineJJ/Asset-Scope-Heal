@@ -423,6 +423,10 @@ export function App() {
     sceneManagerRef.current?.focusSelected();
   };
 
+  const handleFrameRawBounds = () => {
+    sceneManagerRef.current?.frameRawBounds();
+  };
+
   const handleResetCamera = (preset: 'perspective' | 'front' | 'top' | 'right') => {
     sceneManagerRef.current?.cameraController.setViewPreset(preset);
   };
@@ -538,6 +542,7 @@ export function App() {
         onSetLightingPreset={handleSetLightingPreset}
         onFrameAll={handleFrameAll}
         onFocusSelected={handleFocusSelected}
+        onFrameRawBounds={handleFrameRawBounds}
         onResetCamera={handleResetCamera}
         toggles={toggles}
         onToggleHelper={handleToggleHelper}
