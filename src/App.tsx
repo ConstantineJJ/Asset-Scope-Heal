@@ -15,6 +15,7 @@ import { useI18n } from './i18n';
 import { clearHealReport, readHealReport, saveHealReport } from './heal/HealReportStorage';
 import { SurgicalHealEngine } from './heal/SurgicalHealEngine';
 import { previewRepairIssue } from './heal/framework/RepairRegistry';
+import { buildRepairQueueCandidates } from './heal/RepairQueue';
 import {
   RepairedExportService,
   type ExportSourceDescriptor,
@@ -41,6 +42,7 @@ import type {
   LightingPreset,
   MaterialInfo,
   ProgressiveAnalysisState,
+  RepairQueueRunState,
   RenderMode,
   SceneNodeInfo,
   TextureInfo,
@@ -77,6 +79,7 @@ export function App() {
   const [materials, setMaterials] = useState<MaterialInfo[]>([]);
   const [textures, setTextures] = useState<TextureInfo[]>([]);
   const [healthIssues, setHealthIssues] = useState<HealthIssue[]>([]);
+  const healthIssuesRef = useRef<HealthIssue[]>([]);
   const [diagnosticProfileId, setDiagnosticProfileId] = useState<DiagnosticProfileId>('general');
   const diagnosticProfileIdRef = useRef<DiagnosticProfileId>('general');
   const analysisRunIdRef = useRef(0);
@@ -153,6 +156,14 @@ export function App() {
   const [exportReport, setExportReport] = useState<ExportVerificationReport | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [activeRepairReports, setActiveRepairReports] = useState<HealOperationReport[]>([]);
+  const [repairQueueState, setRepairQueueState] = useState<RepairQueueRunState>({
+    status: 'idle',
+    completed: 0,
+    skipped: 0,
+    remaining: 0,
+  });
+  const repairQueueStopRef = useRef(false);
 
   // Initialize Loader & Worker Services
   useEffect(() => {
@@ -247,6 +258,7 @@ export function App() {
         topology,
       });
 
+      healthIssuesRef.current = issues;
       setHealthIssues(issues);
     },
     []
@@ -346,21 +358,24 @@ export function App() {
           console.warn('Topology worker error:', err);
           setProgressiveState((prev) => ({ ...prev, topology: 'error' }));
           rebuildDiagnosticReport(diagnosticProfileIdRef.current);
-          setHealthIssues((prev) => [
-            ...prev.filter((issue) => issue.id !== 'topology-analysis-unknown'),
-            {
-              id: 'topology-analysis-unknown',
-              category: 'Topology',
-              severity: 'UNKNOWN',
-              layer: 'Health',
-              title: 'Topology analysis unavailable',
-              description: 'The background topology pass did not complete, so topology health cannot be determined reliably for this asset.',
-              evidence: err instanceof Error ? err.message : String(err),
-              whyItMatters: 'Asset Doctor should not infer topology health from incomplete data.',
-              suggestedAction: 'Retry analysis or inspect the worker error before making topology-related repair decisions.',
-              repairability: 'NONE',
-            },
-          ]);
+          const topologyFailure: HealthIssue = {
+            id: 'topology-analysis-unknown',
+            category: 'Topology',
+            severity: 'UNKNOWN',
+            layer: 'Health',
+            title: 'Topology analysis unavailable',
+            description: 'The background topology pass did not complete, so topology health cannot be determined reliably for this asset.',
+            evidence: err instanceof Error ? err.message : String(err),
+            whyItMatters: 'Asset Doctor should not infer topology health from incomplete data.',
+            suggestedAction: 'Retry analysis or inspect the worker error before making topology-related repair decisions.',
+            repairability: 'NONE',
+          };
+          const nextIssues = [
+            ...healthIssuesRef.current.filter((issue) => issue.id !== 'topology-analysis-unknown'),
+            topologyFailure,
+          ];
+          healthIssuesRef.current = nextIssues;
+          setHealthIssues(nextIssues);
         }
       }
       return false;
@@ -385,6 +400,10 @@ export function App() {
       setExportReport(null);
       setExportError(null);
       healEngineRef.current?.clear();
+      setActiveRepairReports([]);
+      repairQueueStopRef.current = true;
+      setRepairQueueState({ status: 'idle', completed: 0, skipped: 0, remaining: 0 });
+      healthIssuesRef.current = [];
       setHealReport(null);
       setHealHistorical(false);
       setHealError(null);
@@ -658,13 +677,14 @@ export function App() {
     setHealReport(report);
     setSavedHealReport(report);
     setHealHistorical(false);
+    setActiveRepairReports(engine.getActiveReports());
     setHealStorageFailed(!saveHealReport(report));
   };
 
-  const performHeal = async (undo: boolean) => {
+  const performHeal = async (undo: boolean): Promise<HealOperationReport | null> => {
     const root = currentAssetRootRef.current;
     const engine = healEngineRef.current;
-    if (!root || !engine || healBusyRef.current) return;
+    if (!root || !engine || healBusyRef.current) return null;
     healBusyRef.current = true;
     setHealBusy(true);
     setHealError(null);
@@ -677,29 +697,41 @@ export function App() {
         const reason = result.reasonKey ? t(result.reasonKey) : result.reason ?? t('heal.blocked');
         if (undo) setHealError(reason);
         else setHealPreview(previous => previous ? { ...previous, status: 'BLOCKED', reason, reasonKey: result.reasonKey } : null);
-        return;
+        return null;
       }
+
       setHealPreview(null);
       setHealUndoState(engine.getUndoState());
       publishHealReport(engine);
+
       let complete = false;
-      try { complete = (await refreshAfterHeal()) === true; }
-      catch { /* Preserve measured evidence and Undo if the broader pipeline fails. */ }
+      try {
+        complete = (await refreshAfterHeal()) === true;
+      } catch {
+        // Preserve measured evidence and Undo if the broader pipeline fails.
+      }
+
       // An old analysis completion must never certify or overwrite a newer asset/report.
-      if (currentAssetRootRef.current !== root) return;
+      if (currentAssetRootRef.current !== root) return null;
+
       if (!undo && result.report) engine.completeVerification(result.report.operationId, complete);
       if (undo && !complete) setHealError(t('heal.errors.undoAnalysis'));
       publishHealReport(engine);
+      return engine.getLastOperation();
     } catch {
       if (currentAssetRootRef.current === root) setHealError(t('heal.errors.operationFailed'));
+      return null;
     } finally {
       healBusyRef.current = false;
       setHealBusy(false);
     }
   };
 
-  const handleApplyHeal = () => performHeal(false);
-  const handleUndoHeal = () => performHeal(true);
+  const handleApplyHeal = () => { void performHeal(false); };
+  const handleUndoHeal = () => {
+    repairQueueStopRef.current = true;
+    void performHeal(true);
+  };
 
   const handleShowHealHistory = () => {
     if (!savedHealReport) return;
@@ -726,10 +758,212 @@ export function App() {
 
   const handleRescan = async () => {
     const root = currentAssetRootRef.current;
-    if (!root || isLoading || healBusyRef.current) return;
+    if (!root || isLoading || healBusyRef.current || repairQueueState.status === 'running') return;
     setHealError(null);
     await runAnalysisPipeline(root, currentAnimationClipsRef.current, fileName, fileSizeBytes);
     setTreeRoot(buildSceneTree(root));
+  };
+
+  const handlePreviewNextRepairQueue = () => {
+    const root = currentAssetRootRef.current;
+    const engine = healEngineRef.current;
+    if (!root || !engine || healBusyRef.current || repairQueueState.status === 'running') return;
+
+    const candidates = buildRepairQueueCandidates(healthIssuesRef.current);
+    for (const candidate of candidates) {
+      const preview = previewRepairIssue(engine, root, candidate.issue);
+      if (!preview) continue;
+      setHealPreview(preview);
+      if (preview.status === 'READY') {
+        handleFocusIssue(candidate.issue);
+        return;
+      }
+    }
+  };
+
+  const handleStopRepairQueue = () => {
+    if (repairQueueState.status !== 'running') return;
+    repairQueueStopRef.current = true;
+    setRepairQueueState((previous) => ({
+      ...previous,
+      stopReason: t('heal.queue.stopRequested'),
+    }));
+  };
+
+  const handleRunSafeRepairQueue = async () => {
+    const root = currentAssetRootRef.current;
+    const engine = healEngineRef.current;
+    if (!root || !engine || healBusyRef.current || repairQueueState.status === 'running') return;
+
+    const initialCandidates = buildRepairQueueCandidates(healthIssuesRef.current);
+    if (initialCandidates.length === 0) {
+      setRepairQueueState({
+        status: 'completed',
+        completed: 0,
+        skipped: 0,
+        remaining: 0,
+        stopReason: t('heal.queue.noCandidates'),
+      });
+      return;
+    }
+
+    if (!window.confirm(t('heal.queue.confirm', { count: initialCandidates.length }))) return;
+
+    repairQueueStopRef.current = false;
+    let completed = 0;
+    let skipped = 0;
+    const blockedKeys = new Set<string>();
+    const completedKeys = new Set<string>();
+
+    setRepairQueueState({
+      status: 'running',
+      completed,
+      skipped,
+      remaining: initialCandidates.length,
+    });
+
+    // Hard guard against unexpected diagnostic cycles. Registered operations
+    // should resolve a candidate in one transaction.
+    for (let pass = 0; pass < 250; pass++) {
+      if (repairQueueStopRef.current) {
+        setRepairQueueState((previous) => ({
+          ...previous,
+          status: 'stopped',
+          stopReason: t('heal.queue.stoppedByUser'),
+        }));
+        return;
+      }
+
+      if (currentAssetRootRef.current !== root) {
+        setRepairQueueState((previous) => ({
+          ...previous,
+          status: 'failed',
+          stopReason: t('heal.queue.assetChanged'),
+        }));
+        return;
+      }
+
+      const candidates = buildRepairQueueCandidates(healthIssuesRef.current)
+        .filter((candidate) => !blockedKeys.has(candidate.key));
+
+      if (candidates.length === 0) {
+        setRepairQueueState({
+          status: 'completed',
+          completed,
+          skipped,
+          remaining: 0,
+          stopReason: t('heal.queue.complete'),
+        });
+        return;
+      }
+
+      let selected: (typeof candidates)[number] | null = null;
+      let selectedPreview: HealPreview | null = null;
+
+      for (const candidate of candidates) {
+        // A VERIFIED operation should remove its queue key after Rescan. If the
+        // same key reappears, do not loop forever.
+        if (completedKeys.has(candidate.key)) {
+          setRepairQueueState({
+            status: 'partial',
+            completed,
+            skipped,
+            remaining: candidates.length,
+            currentOperation: candidate.operation,
+            currentMeshName: candidate.meshName,
+            stopReason: t('heal.queue.targetReturned'),
+          });
+          return;
+        }
+
+        const preview = previewRepairIssue(engine, root, candidate.issue);
+        if (!preview || preview.status !== 'READY') {
+          blockedKeys.add(candidate.key);
+          skipped++;
+          continue;
+        }
+
+        selected = candidate;
+        selectedPreview = preview;
+        break;
+      }
+
+      if (!selected || !selectedPreview) {
+        setRepairQueueState({
+          status: 'completed',
+          completed,
+          skipped,
+          remaining: 0,
+          stopReason: skipped > 0 ? t('heal.queue.completeWithSkipped') : t('heal.queue.complete'),
+        });
+        return;
+      }
+
+      setHealPreview(selectedPreview);
+      setRepairQueueState({
+        status: 'running',
+        completed,
+        skipped,
+        remaining: candidates.length,
+        currentOperation: selected.operation,
+        currentMeshName: selected.meshName,
+      });
+
+      const report = await performHeal(false);
+      if (!report) {
+        setRepairQueueState({
+          status: 'failed',
+          completed,
+          skipped,
+          remaining: candidates.length,
+          currentOperation: selected.operation,
+          currentMeshName: selected.meshName,
+          stopReason: t('heal.queue.applyFailed'),
+        });
+        return;
+      }
+
+      completedKeys.add(selected.key);
+
+      if (report.status !== 'VERIFIED' || report.pipeline !== 'complete') {
+        const status =
+          report.status === 'REGRESSION'
+            ? 'regression'
+            : report.status === 'PARTIAL'
+              ? 'partial'
+              : 'failed';
+        setRepairQueueState({
+          status,
+          completed,
+          skipped,
+          remaining: buildRepairQueueCandidates(healthIssuesRef.current).length,
+          currentOperation: selected.operation,
+          currentMeshName: selected.meshName,
+          stopReason:
+            report.status === 'REGRESSION'
+              ? t('heal.queue.regressionStop')
+              : t('heal.queue.partialStop'),
+        });
+        return;
+      }
+
+      completed++;
+      const remaining = buildRepairQueueCandidates(healthIssuesRef.current).length;
+      setRepairQueueState({
+        status: 'running',
+        completed,
+        skipped,
+        remaining,
+      });
+    }
+
+    setRepairQueueState({
+      status: 'failed',
+      completed,
+      skipped,
+      remaining: buildRepairQueueCandidates(healthIssuesRef.current).length,
+      stopReason: t('heal.queue.guardStop'),
+    });
   };
 
   // Export Repaired Copy v0.1
@@ -738,15 +972,13 @@ export function App() {
     const source = currentExportSourceRef.current;
     const engine = healEngineRef.current;
     const service = exportServiceRef.current;
-    const report = healReport;
-
-    if (!root || !source || !engine || !service || !report || healHistorical || exportBusy) {
+    if (!root || !source || !engine || !service || exportBusy) {
       setExportError(t('export.errors.unavailable'));
       return null;
     }
 
-    const preflight = engine.validateCurrentVerifiedState(root, report);
-    if (!preflight.ok) {
+    const preflight = engine.validateCurrentVerifiedSession(root);
+    if (!preflight.ok || preflight.reports.length === 0) {
       setExportError(t(preflight.reasonKey ?? 'export.errors.unavailable'));
       return null;
     }
@@ -761,7 +993,7 @@ export function App() {
         source,
         currentRoot: root,
         assetName: fileName,
-        healReport: report,
+        healReports: preflight.reports,
       });
 
       exportResultRef.current = result;
@@ -867,11 +1099,10 @@ export function App() {
   }, [renderMode]);
 
   const canExportRepaired = Boolean(
-    healReport &&
-    !healHistorical &&
-    healReport.status === 'VERIFIED' &&
-    healReport.pipeline === 'complete' &&
-    !healReport.undoneAt &&
+    activeRepairReports.length > 0 &&
+    activeRepairReports.every(
+      (report) => report.status === 'VERIFIED' && report.pipeline === 'complete' && !report.undoneAt
+    ) &&
     currentExportSourceRef.current
   );
 
@@ -953,6 +1184,10 @@ export function App() {
           onDismissHealReport={handleDismissHealReport}
           onClearHealHistory={handleClearHealHistory}
           onRescan={handleRescan}
+          repairQueueState={repairQueueState}
+          onPreviewRepairQueueNext={handlePreviewNextRepairQueue}
+          onRunRepairQueue={handleRunSafeRepairQueue}
+          onStopRepairQueue={handleStopRepairQueue}
           exportReport={exportReport}
           exportBusy={exportBusy}
           exportError={exportError}
