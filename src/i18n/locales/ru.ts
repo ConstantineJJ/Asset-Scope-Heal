@@ -34,6 +34,14 @@ export const ru = {
     showTitle: 'Показать часть',
     topNodes: 'верхних узлов',
   },
+  repair: {
+    operations: {
+      removeDegenerateTriangles: {
+        label: 'Удалить degenerate triangles',
+        description: 'Предпросмотр защищённой index-only починки degenerate triangles.',
+      },
+    },
+  },
   heal: {
     report: {
       VERIFIED: 'Проверка конкретной операции пройдена по повторным измерениям.',
