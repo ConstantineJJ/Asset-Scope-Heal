@@ -239,6 +239,44 @@ export interface TopologyStats {
   localizationSamples?: Partial<Record<TopologyLocalizationKind, TopologyLocalizationSample[]>>;
 }
 
+export type HealOperationKind = 'remove-degenerate-triangles';
+
+export interface HealPreview {
+  operationId: string;
+  operation: HealOperationKind;
+  issueId: string;
+  meshUuid: string;
+  meshName: string;
+  status: 'READY' | 'BLOCKED';
+  risk: 'CONDITIONAL';
+  reason?: string;
+  trianglesBefore: number;
+  trianglesAfter: number;
+  affectedTriangles: number;
+  boundaryEdgesBefore: number;
+  boundaryEdgesAfter: number;
+  nonManifoldEdgesBefore: number;
+  nonManifoldEdgesAfter: number;
+}
+
+export interface HealApplyResult {
+  success: boolean;
+  operation?: HealOperationKind;
+  meshUuid?: string;
+  meshName?: string;
+  affectedTriangles?: number;
+  trianglesBefore?: number;
+  trianglesAfter?: number;
+  reason?: string;
+}
+
+export interface HealUndoState {
+  available: boolean;
+  operation?: HealOperationKind;
+  meshName?: string;
+  affectedTriangles?: number;
+}
+
 export type RenderMode =
   | 'pbr'
   | 'unlit'
