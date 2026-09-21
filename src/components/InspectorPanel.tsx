@@ -39,6 +39,7 @@ import type {
 } from '../types';
 import { DIAGNOSTIC_PROFILES } from '../health/DiagnosticProfiles';
 import { useI18n } from '../i18n';
+import { getRepairOperationForIssue } from '../heal/framework/RepairRegistry';
 import { HealReportPanel } from './HealReportPanel';
 
 interface InspectorPanelProps {
@@ -581,11 +582,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                         <span className="inline-block px-1.5 py-0.5 rounded bg-[#15171c] border border-[#343845] text-amber-300 font-mono uppercase">
                           {t('inspector.repair')}: {issue.repairability}
                         </span>
-                        {issue.id === 'topo-degenerate-triangles' && issue.meshUuid && (
+                        {getRepairOperationForIssue(issue) && issue.meshUuid && (
                           <button
                             disabled={healBusy}
                             onClick={() => onPreviewHeal(issueAtCurrentLocation(issue))}
                             className="px-1.5 py-0.5 rounded bg-amber-950/40 border border-amber-800 text-amber-300 hover:text-amber-100 hover:bg-amber-950/70 cursor-pointer"
+                            title={t(getRepairOperationForIssue(issue)!.descriptionKey)}
                           >
                             {t('heal.previewFix')}
                           </button>
