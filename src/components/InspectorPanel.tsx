@@ -29,6 +29,7 @@ import type {
   HealthSeverity,
   HealOperationReport,
   HealPreview,
+  ExportVerificationReport,
   HealUndoState,
   LightingConfig,
   MaterialInfo,
@@ -61,6 +62,12 @@ interface InspectorPanelProps {
   healBusy: boolean;
   healError: string | null;
   healStorageFailed: boolean;
+  exportReport: ExportVerificationReport | null;
+  exportBusy: boolean;
+  exportError: string | null;
+  canExport: boolean;
+  onBuildExport: () => void;
+  onDownloadExport: () => void;
   onPreviewHeal: (issue: HealthIssue) => void;
   onCancelHealPreview: () => void;
   onApplyHeal: () => void;
@@ -84,6 +91,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onRestoreIssueView,
   healPreview,
   healUndoState, healReport, healHistorical, healBusy, healError, healStorageFailed,
+  exportReport, exportBusy, exportError, canExport, onBuildExport, onDownloadExport,
   onPreviewHeal,
   onCancelHealPreview,
   onApplyHeal,
@@ -332,8 +340,21 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             )}
           </div>
 
-          <HealReportPanel report={healReport} historical={healHistorical} busy={healBusy}
-            error={healError} storageFailed={healStorageFailed} undoState={healUndoState} onUndo={onUndoHeal} />
+          <HealReportPanel
+            report={healReport}
+            historical={healHistorical}
+            busy={healBusy}
+            error={healError}
+            storageFailed={healStorageFailed}
+            undoState={healUndoState}
+            onUndo={onUndoHeal}
+            exportReport={exportReport}
+            exportBusy={exportBusy}
+            exportError={exportError}
+            canExport={canExport}
+            onBuildExport={onBuildExport}
+            onDownloadExport={onDownloadExport}
+          />
           {!healReport && healError && <p role="alert" className="text-xs text-rose-300">{healError}</p>}
 
           {/* Progressive Analysis Pipeline Tracker */}
