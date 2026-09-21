@@ -22,8 +22,28 @@ const removeDegenerateTriangles: RepairOperationDefinition = {
   },
 };
 
+const removeUnreferencedVertices: RepairOperationDefinition = {
+  kind: 'remove-unreferenced-vertices',
+  issueIds: ['topo-isolated-vertices'],
+  risk: 'CONDITIONAL',
+  labelKey: 'repair.operations.removeUnreferencedVertices.label',
+  descriptionKey: 'repair.operations.removeUnreferencedVertices.description',
+  capabilities: {
+    preview: true,
+    apply: true,
+    undo: true,
+    verify: true,
+    exportPatch: 'geometry',
+  },
+  preview: (engine, root, issue) => {
+    if (!issue.meshUuid) return null;
+    return engine.previewRemoveUnreferencedVertices(root, issue.meshUuid);
+  },
+};
+
 const OPERATIONS: readonly RepairOperationDefinition[] = [
   removeDegenerateTriangles,
+  removeUnreferencedVertices,
 ];
 
 const BY_KIND = new Map<HealOperationKind, RepairOperationDefinition>(
