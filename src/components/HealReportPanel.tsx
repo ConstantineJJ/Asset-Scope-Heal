@@ -152,6 +152,14 @@ export function HealReportPanel({
                 <span className="text-right text-gray-200">
                   {exportReport.targetUnreferencedExpected} → {exportReport.targetUnreferencedActual}
                 </span>
+                <span>{t('export.metrics.invalidNormals')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.targetInvalidNormalsExpected} → {exportReport.targetInvalidNormalsActual}
+                </span>
+                <span>{t('export.metrics.duplicatePositions')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.targetDuplicatePositionsExpected} → {exportReport.targetDuplicatePositionsActual}
+                </span>
                 <span>{t('export.metrics.meshes')}</span>
                 <span className="text-right text-gray-200">
                   {exportReport.meshCountExpected} → {exportReport.meshCountActual}
