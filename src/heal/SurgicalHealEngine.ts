@@ -308,7 +308,7 @@ export class SurgicalHealEngine {
 
     const obj = root.getObjectByProperty('uuid', meshUuid);
     if (!obj || !(obj as THREE.Mesh).isMesh || (obj as THREE.InstancedMesh).isInstancedMesh) {
-      return this.blockedUnreferenced(meshUuid, 'Unknown or unsupported mesh');
+      return this.blockedUnreferenced(meshUuid, 'Unknown mesh', 'Unknown or unsupported mesh');
     }
 
     const mesh = obj as THREE.Mesh;
