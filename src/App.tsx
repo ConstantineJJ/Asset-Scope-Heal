@@ -706,7 +706,7 @@ export function App() {
   const handleUndoHeal = () => performHeal(true);
 
   // Export Repaired Copy v0.1
-  const handleBuildRepairedExport = async () => {
+  const handleBuildRepairedExport = async (): Promise<RepairedExportResult | null> => {
     const root = currentAssetRootRef.current;
     const source = currentExportSourceRef.current;
     const engine = healEngineRef.current;
@@ -715,13 +715,13 @@ export function App() {
 
     if (!root || !source || !engine || !service || !report || healHistorical || exportBusy) {
       setExportError(t('export.errors.unavailable'));
-      return;
+      return null;
     }
 
     const preflight = engine.validateCurrentVerifiedState(root, report);
     if (!preflight.ok) {
       setExportError(t(preflight.reasonKey ?? 'export.errors.unavailable'));
-      return;
+      return null;
     }
 
     setExportBusy(true);
@@ -742,10 +742,13 @@ export function App() {
 
       if (result.report.status !== 'VERIFIED') {
         setExportError(t('export.errors.verificationFailed'));
+        return null;
       }
+      return result;
     } catch (error) {
       const key = error instanceof Error ? error.message : 'export.errors.failed';
       setExportError(t(key.startsWith('export.') ? key : 'export.errors.failed'));
+      return null;
     } finally {
       setExportBusy(false);
     }
@@ -756,6 +759,22 @@ export function App() {
     const service = exportServiceRef.current;
     if (!result || !service || result.report.status !== 'VERIFIED') return;
     service.download(result);
+  };
+
+  const handleToolbarExport = async () => {
+    const service = exportServiceRef.current;
+    if (!service || exportBusy) return;
+
+    const cached = exportResultRef.current;
+    if (cached?.report.status === 'VERIFIED') {
+      service.download(cached);
+      return;
+    }
+
+    const result = await handleBuildRepairedExport();
+    if (result?.report.status === 'VERIFIED') {
+      service.download(result);
+    }
   };
 
   // Animation Handlers
@@ -815,11 +834,23 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [renderMode]);
 
+  const canExportRepaired = Boolean(
+    healReport &&
+    !healHistorical &&
+    healReport.status === 'VERIFIED' &&
+    healReport.pipeline === 'complete' &&
+    !healReport.undoneAt &&
+    currentExportSourceRef.current
+  );
+
   return (
     <div className="flex flex-col h-screen w-screen bg-[#131518] text-gray-100 overflow-hidden font-sans select-none">
       {/* Top Application Toolbar */}
       <TopToolbar
         onOpenFile={handleOpenFile}
+        onExport={handleToolbarExport}
+        canExport={canExportRepaired}
+        exportBusy={exportBusy}
         onSelectSample={handleSelectSample}
         renderMode={renderMode}
         onSetRenderMode={handleSetRenderMode}
@@ -887,14 +918,7 @@ export function App() {
           exportReport={exportReport}
           exportBusy={exportBusy}
           exportError={exportError}
-          canExport={Boolean(
-            healReport &&
-            !healHistorical &&
-            healReport.status === 'VERIFIED' &&
-            healReport.pipeline === 'complete' &&
-            !healReport.undoneAt &&
-            currentExportSourceRef.current
-          )}
+          canExport={canExportRepaired}
           onBuildExport={handleBuildRepairedExport}
           onDownloadExport={handleDownloadRepairedExport}
           onPreviewHeal={handlePreviewHeal}
