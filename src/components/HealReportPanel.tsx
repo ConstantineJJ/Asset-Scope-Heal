@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import type { HealOperationReport, HealUndoState } from '../types';
+import type { ExportVerificationReport, HealOperationReport, HealUndoState } from '../types';
 import { healMetricKeys } from '../heal/HealVerification';
 import { useI18n } from '../i18n';
 
@@ -11,9 +11,29 @@ interface Props {
   storageFailed: boolean;
   undoState: HealUndoState;
   onUndo: () => void;
+  exportReport: ExportVerificationReport | null;
+  exportBusy: boolean;
+  exportError: string | null;
+  canExport: boolean;
+  onBuildExport: () => void;
+  onDownloadExport: () => void;
 }
 
-export function HealReportPanel({ report, historical, busy, error, storageFailed, undoState, onUndo }: Props) {
+export function HealReportPanel({
+  report,
+  historical,
+  busy,
+  error,
+  storageFailed,
+  undoState,
+  onUndo,
+  exportReport,
+  exportBusy,
+  exportError,
+  canExport,
+  onBuildExport,
+  onDownloadExport,
+}: Props) {
   const { t } = useI18n();
   const reportRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -59,6 +79,112 @@ export function HealReportPanel({ report, historical, busy, error, storageFailed
         className="px-2 py-1 border rounded text-[11px] disabled:opacity-40 cursor-pointer">
         {t('heal.undo')} · {undoState.meshName}
       </button>}
+
+      {!historical && (
+        <div className="pt-2 mt-1 border-t border-gray-800 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider font-semibold text-cyan-300">
+                {t('export.title')}
+              </div>
+              <div className="text-[9px] text-gray-400">
+                {t('export.subtitle')}
+              </div>
+            </div>
+            {!exportReport && (
+              <button
+                onClick={onBuildExport}
+                disabled={!canExport || exportBusy || busy}
+                className="px-2 py-1 rounded border border-cyan-800 bg-cyan-950/30 text-cyan-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-[10px]"
+              >
+                {exportBusy ? t('export.verifying') : t('export.build')}
+              </button>
+            )}
+          </div>
+
+          {exportReport && (
+            <div className={`rounded border p-2 space-y-1.5 ${
+              exportReport.status === 'VERIFIED'
+                ? 'border-emerald-800/70 bg-emerald-950/10'
+                : exportReport.status === 'REGRESSION' || exportReport.status === 'FAILED'
+                  ? 'border-rose-800/70 bg-rose-950/10'
+                  : 'border-amber-800/70 bg-amber-950/10'
+            }`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-semibold text-gray-200">
+                  {exportReport.exportedName}
+                </span>
+                <strong className={`text-[10px] font-mono ${
+                  exportReport.status === 'VERIFIED'
+                    ? 'text-emerald-300'
+                    : exportReport.status === 'REGRESSION' || exportReport.status === 'FAILED'
+                      ? 'text-rose-300'
+                      : 'text-amber-300'
+                }`}>
+                  {exportReport.status}
+                </strong>
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px] text-gray-400 tabular-nums">
+                <span>{t('export.metrics.totalTriangles')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.triangleCountExpected} → {exportReport.triangleCountActual}
+                </span>
+                <span>{t('export.metrics.targetTriangles')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.targetTrianglesExpected} → {exportReport.targetTrianglesActual}
+                </span>
+                <span>{t('export.metrics.degenerates')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.targetDegeneratesExpected} → {exportReport.targetDegeneratesActual}
+                </span>
+                <span>{t('export.metrics.meshes')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.meshCountExpected} → {exportReport.meshCountActual}
+                </span>
+                <span>{t('export.metrics.materials')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.materialCountExpected} → {exportReport.materialCountActual}
+                </span>
+                <span>{t('export.metrics.bones')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.boneCountExpected} → {exportReport.boneCountActual}
+                </span>
+                <span>{t('export.metrics.animations')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.clipCountExpected} → {exportReport.clipCountActual}
+                </span>
+              </div>
+
+              {exportReport.reasons.length > 0 && (
+                <div className="text-[9px] text-rose-300 break-words">
+                  {exportReport.reasons.map((reason) => t(`export.reasons.${reason}`)).join(' · ')}
+                </div>
+              )}
+
+              <div className="flex items-center gap-1.5 pt-1">
+                {exportReport.status === 'VERIFIED' && (
+                  <button
+                    onClick={onDownloadExport}
+                    className="px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-medium cursor-pointer text-[10px]"
+                  >
+                    {t('export.download')}
+                  </button>
+                )}
+                <button
+                  onClick={onBuildExport}
+                  disabled={!canExport || exportBusy || busy}
+                  className="px-2 py-1 rounded border border-[#3b414d] bg-[#22252c] text-gray-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-[10px]"
+                >
+                  {exportBusy ? t('export.verifying') : t('export.rebuild')}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {exportError && <p role="alert" className="text-[10px] text-rose-300">{exportError}</p>}
+        </div>
+      )}
     </section>
   );
 }
