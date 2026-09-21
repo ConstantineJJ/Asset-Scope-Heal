@@ -53,11 +53,14 @@ The sample factory creates a new pristine sample instance.
 
 The clean source and current repaired scene are matched by deterministic mesh traversal.
 
-Only index buffers are copied from the repaired scene into the clean source.
+The Repair Registry declares the export patch class for the verified operation.
+
+- `index-only`: only the repaired target index buffer is copied.
+- `geometry`: the verified target geometry data is copied, including index, vertex-domain attributes, morph attributes, groups and draw range.
 
 No viewport materials, visibility state, pose, helper objects or presentation transforms are copied.
 
-This matches the current Surgical Heal contract, where v0.x repair changes only triangle indices.
+This allows vertex compaction repairs to survive export without serializing presentation-only viewport state.
 
 ## Serialization
 
@@ -82,6 +85,8 @@ Verification checks include:
 - total triangle count;
 - repaired target triangle count;
 - repaired target degenerate-triangle count;
+- repaired target vertex count;
+- repaired target unreferenced-vertex count;
 - mesh count;
 - mesh names / mesh types / vertex counts / triangle layout;
 - material count and material structure;
