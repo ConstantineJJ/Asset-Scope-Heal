@@ -11,6 +11,7 @@ import type {
 } from '../types';
 import { getRepairOperation } from '../heal/framework/RepairRegistry';
 import { copyGeometryData } from '../heal/GeometryRemap';
+import { measureGeometryNormals } from '../analysis/NormalsMeasure';
 
 export type ExportSampleId = 'test-patient';
 
@@ -52,12 +53,17 @@ export class RepairedExportService {
       throw new Error('export.errors.targetMissing');
     }
 
-    const currentTargetStats = analyzeMeshTopology(meshTopologyData(currentMeshes[targetOrdinal]));
+    const currentTarget = currentMeshes[targetOrdinal];
+    const currentTargetStats = analyzeMeshTopology(meshTopologyData(currentTarget));
+    const currentTargetNormals = measureGeometryNormals(currentTarget.geometry);
     if (
       currentTargetStats.triangleCount !== healReport.after.triangleCount ||
       currentTargetStats.vertexCount !== healReport.after.vertexCount ||
       currentTargetStats.degenerateTriangles !== healReport.after.degenerateTriangles ||
-      currentTargetStats.isolatedVertices !== healReport.after.isolatedVertices
+      currentTargetStats.isolatedVertices !== healReport.after.isolatedVertices ||
+      currentTargetStats.potentialDuplicatePositions !== healReport.after.potentialDuplicatePositions ||
+      (healReport.after.invalidNormals !== undefined &&
+        currentTargetNormals.invalidCount !== healReport.after.invalidNormals)
     ) {
       throw new Error('export.errors.geometryChanged');
     }
@@ -137,12 +143,17 @@ export class RepairedExportService {
       let targetDegeneratesActual = -1;
       let targetVerticesActual = -1;
       let targetUnreferencedActual = -1;
+      let targetInvalidNormalsActual = -1;
+      let targetDuplicatePositionsActual = -1;
       if (targetMesh) {
         const targetStats = analyzeMeshTopology(meshTopologyData(targetMesh));
+        const targetNormals = measureGeometryNormals(targetMesh.geometry);
         targetTrianglesActual = targetStats.triangleCount;
         targetDegeneratesActual = targetStats.degenerateTriangles;
         targetVerticesActual = targetStats.vertexCount;
         targetUnreferencedActual = targetStats.isolatedVertices;
+        targetInvalidNormalsActual = targetNormals.invalidCount;
+        targetDuplicatePositionsActual = targetStats.potentialDuplicatePositions;
       }
 
       if (actualSummary.triangleCount !== currentSummary.triangleCount) reasons.push('triangleCount');
@@ -150,6 +161,13 @@ export class RepairedExportService {
       if (targetDegeneratesActual !== healReport.after.degenerateTriangles) reasons.push('targetDegenerates');
       if (targetVerticesActual !== healReport.after.vertexCount) reasons.push('targetVertices');
       if (targetUnreferencedActual !== healReport.after.isolatedVertices) reasons.push('targetUnreferenced');
+      if (
+        healReport.after.invalidNormals !== undefined &&
+        targetInvalidNormalsActual !== healReport.after.invalidNormals
+      ) reasons.push('targetInvalidNormals');
+      if (targetDuplicatePositionsActual !== healReport.after.potentialDuplicatePositions) {
+        reasons.push('targetDuplicatePositions');
+      }
       if (actualSummary.meshCount !== pristineSummary.meshCount) reasons.push('meshCount');
       if (actualSummary.materialCount !== pristineSummary.materialCount) reasons.push('materialCount');
       if (actualSummary.textureCount !== pristineSummary.textureCount) reasons.push('textureCount');
@@ -176,6 +194,10 @@ export class RepairedExportService {
         targetVerticesActual,
         targetUnreferencedExpected: healReport.after.isolatedVertices,
         targetUnreferencedActual,
+        targetInvalidNormalsExpected: healReport.after.invalidNormals ?? currentTargetNormals.invalidCount,
+        targetInvalidNormalsActual,
+        targetDuplicatePositionsExpected: healReport.after.potentialDuplicatePositions,
+        targetDuplicatePositionsActual,
         meshCountExpected: pristineSummary.meshCount,
         meshCountActual: actualSummary.meshCount,
         materialCountExpected: pristineSummary.materialCount,
@@ -266,7 +288,7 @@ export class RepairedExportService {
       return;
     }
 
-    if (!current.geometry.index || !fresh.geometry.index) {
+    if (Boolean(current.geometry.index) !== Boolean(fresh.geometry.index)) {
       throw new Error('export.errors.structureMismatch');
     }
 
