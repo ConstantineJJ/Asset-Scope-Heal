@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import type { ExportVerificationReport, HealOperationReport, HealUndoState } from '../types';
 import { healMetricKeys } from '../heal/HealVerification';
 import { useI18n } from '../i18n';
+import { getRepairOperation } from '../heal/framework/RepairRegistry';
 
 interface Props {
   report: HealOperationReport | null;
@@ -40,6 +41,7 @@ export function HealReportPanel({
     if (!historical) reportRef.current?.scrollIntoView({ block: 'nearest' });
   }, [report?.operationId, report?.status, report?.undoneAt, historical]);
   if (!report) return null;
+  const operation = getRepairOperation(report.operation);
   const color = report.status === 'REGRESSION' ? 'text-rose-300 border-rose-800'
     : report.status === 'VERIFIED' ? 'text-emerald-300 border-emerald-800' : 'text-amber-300 border-amber-800';
   return (
@@ -48,12 +50,16 @@ export function HealReportPanel({
         <h3 className="text-[11px] font-semibold">{t('heal.lastOperation')}</h3>
         <strong role="status" className="text-[11px] font-mono">{report.status}</strong>
       </div>
-      <div className="text-[10px] text-gray-300 break-words">{report.assetName} · {report.meshName}</div>
+      <div className="text-[10px] text-gray-300 break-words">
+        {operation ? t(operation.labelKey) : report.operation} · {report.assetName} · {report.meshName}
+      </div>
       <div className="text-[10px] text-gray-400 break-all">{report.appliedAt}</div>
       <p className="text-[11px]">{t(`heal.report.${report.status}`)}</p>
       {historical && <p className="text-[11px] text-amber-300">{t('heal.report.historical')}</p>}
       {report.undoneAt && <p className="text-[11px] text-cyan-300">{t('heal.report.undone')}</p>}
-      <p className="text-[10px] text-gray-400">{t('heal.report.scope')}</p>
+      <p className="text-[10px] text-gray-400">
+        {t(operation?.capabilities.exportPatch === 'geometry' ? 'heal.report.scopeGeometry' : 'heal.report.scopeIndex')}
+      </p>
       <table className="w-full text-[10px] text-gray-300 tabular-nums">
         <caption className="text-left mb-1">{t('heal.report.measured')}</caption>
         <thead><tr>
