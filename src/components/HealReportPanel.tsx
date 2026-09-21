@@ -191,6 +191,10 @@ export function HealReportPanel({
               </div>
 
               <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px] text-gray-400 tabular-nums">
+                <span>{t('export.metrics.repairs')}</span>
+                <span className="text-right text-gray-200">{exportReport.repairCount}</span>
+                <span>{t('export.metrics.repairedMeshes')}</span>
+                <span className="text-right text-gray-200">{exportReport.repairedMeshCount}</span>
                 <span>{t('export.metrics.totalTriangles')}</span>
                 <span className="text-right text-gray-200">
                   {exportReport.triangleCountExpected} → {exportReport.triangleCountActual}
