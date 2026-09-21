@@ -150,7 +150,7 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
             max="1"
             step="0.001"
             value={progress}
-            onChange={(e) => onSeek(Number(e.target.value))}
+            onInput={(e) => onSeek(Number((e.target as HTMLInputElement).value))}
             className="flex-1 h-1.5 accent-cyan-400 cursor-pointer bg-[#262932] rounded"
           />
 
