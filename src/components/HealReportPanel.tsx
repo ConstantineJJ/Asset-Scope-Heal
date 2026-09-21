@@ -146,6 +146,10 @@ export function HealReportPanel({
                 <span className="text-right text-gray-200">
                   {exportReport.materialCountExpected} → {exportReport.materialCountActual}
                 </span>
+                <span>{t('export.metrics.textures')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.textureCountExpected} → {exportReport.textureCountActual}
+                </span>
                 <span>{t('export.metrics.bones')}</span>
                 <span className="text-right text-gray-200">
                   {exportReport.boneCountExpected} → {exportReport.boneCountActual}
