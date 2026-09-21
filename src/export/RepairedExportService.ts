@@ -23,7 +23,6 @@ export type ExportSourceDescriptor =
 export interface RepairedExportRequest {
   source: ExportSourceDescriptor;
   currentRoot: THREE.Group;
-  currentAnimations: THREE.AnimationClip[];
   assetName: string;
   healReport: HealOperationReport;
 }
@@ -109,9 +108,22 @@ export class RepairedExportService {
       const targetMesh = reopenedMeshes[targetOrdinal];
       const reasons: string[] = [];
 
+      const expectedMeshSignature = this.meshSignature(freshMeshes);
+      const actualMeshSignature = this.meshSignature(reopenedMeshes);
+      const expectedMaterialSignature = this.materialSignature(fresh.root);
+      const actualMaterialSignature = this.materialSignature(reopened.root);
+      const expectedRigSignature = this.rigSignature(fresh.root);
+      const actualRigSignature = this.rigSignature(reopened.root);
+      const expectedAnimationSignature = this.animationSignature(fresh.animations);
+      const actualAnimationSignature = this.animationSignature(reopened.animations);
+
       if (reopenedMeshes.length !== freshMeshes.length || !targetMesh) {
         reasons.push('meshComposition');
       }
+      if (expectedMeshSignature !== actualMeshSignature) reasons.push('meshStructure');
+      if (expectedMaterialSignature !== actualMaterialSignature) reasons.push('materialStructure');
+      if (expectedRigSignature !== actualRigSignature) reasons.push('rigStructure');
+      if (expectedAnimationSignature !== actualAnimationSignature) reasons.push('animationStructure');
 
       let targetTrianglesActual = -1;
       let targetDegeneratesActual = -1;
@@ -233,6 +245,57 @@ export class RepairedExportService {
         fresh.geometry.computeBoundingSphere();
       }
     }
+  }
+
+  private meshSignature(meshes: THREE.Mesh[]) {
+    return JSON.stringify(meshes.map((mesh) => ({
+      name: mesh.name,
+      skinned: Boolean((mesh as THREE.SkinnedMesh).isSkinnedMesh),
+      vertices: mesh.geometry?.attributes?.position?.count ?? 0,
+      triangles: mesh.geometry?.index
+        ? Math.floor(mesh.geometry.index.count / 3)
+        : Math.floor((mesh.geometry?.attributes?.position?.count ?? 0) / 3),
+    })));
+  }
+
+  private materialSignature(root: THREE.Object3D) {
+    const values: string[] = [];
+    const seen = new Set<string>();
+    root.traverse((obj) => {
+      if (!(obj as THREE.Mesh).isMesh) return;
+      const mats = Array.isArray((obj as THREE.Mesh).material)
+        ? (obj as THREE.Mesh).material
+        : [(obj as THREE.Mesh).material];
+      for (const material of mats) {
+        if (!material || seen.has(material.uuid)) continue;
+        seen.add(material.uuid);
+        values.push(JSON.stringify([
+          material.name,
+          material.type,
+          (material as THREE.MeshStandardMaterial).transparent,
+          (material as THREE.MeshStandardMaterial).side,
+        ]));
+      }
+    });
+    return JSON.stringify(values.sort());
+  }
+
+  private rigSignature(root: THREE.Object3D) {
+    const bones: string[] = [];
+    let skinnedMeshes = 0;
+    root.traverse((obj) => {
+      if ((obj as THREE.Bone).isBone) bones.push(obj.name);
+      if ((obj as THREE.SkinnedMesh).isSkinnedMesh) skinnedMeshes++;
+    });
+    return JSON.stringify({ skinnedMeshes, bones: bones.sort() });
+  }
+
+  private animationSignature(clips: THREE.AnimationClip[]) {
+    return JSON.stringify(clips.map((clip) => ({
+      name: clip.name,
+      duration: Number(clip.duration.toFixed(6)),
+      tracks: clip.tracks.length,
+    })));
   }
 
   private makeExportName(assetName: string) {
