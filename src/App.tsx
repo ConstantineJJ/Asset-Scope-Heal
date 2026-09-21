@@ -807,6 +807,8 @@ export function App() {
   // Animation Handlers
   const handleSelectClip = (idx: number) => {
     setActiveClipIndex(idx);
+    setAnimationTime(0);
+    setAnimationDuration(animationClips[idx]?.duration ?? 0);
     sceneManagerRef.current?.playAnimationClip(idx);
     setIsPlayingAnimation(true);
   };
