@@ -12,7 +12,7 @@ import { createAssetDoctorTestPatient } from './loaders/SampleModels';
 import { WorkerManager } from './workers/WorkerManager';
 import { HealthEngine } from './health/HealthEngine';
 import { useI18n } from './i18n';
-import { readHealReport, saveHealReport } from './heal/HealReportStorage';
+import { clearHealReport, readHealReport, saveHealReport } from './heal/HealReportStorage';
 import { SurgicalHealEngine } from './heal/SurgicalHealEngine';
 import { previewRepairIssue } from './heal/framework/RepairRegistry';
 import {
@@ -143,8 +143,9 @@ export function App() {
   const [healPreview, setHealPreview] = useState<HealPreview | null>(null);
   const [healUndoState, setHealUndoState] = useState<HealUndoState>({ available: false });
 
-  const [healReport, setHealReport] = useState<HealOperationReport | null>(() => readHealReport());
-  const [healHistorical, setHealHistorical] = useState(true);
+  const [savedHealReport, setSavedHealReport] = useState<HealOperationReport | null>(() => readHealReport());
+  const [healReport, setHealReport] = useState<HealOperationReport | null>(null);
+  const [healHistorical, setHealHistorical] = useState(false);
   const [healBusy, setHealBusy] = useState(false);
   const healBusyRef = useRef(false);
   const [healError, setHealError] = useState<string | null>(null);
@@ -384,7 +385,8 @@ export function App() {
       setExportReport(null);
       setExportError(null);
       healEngineRef.current?.clear();
-      setHealHistorical(true);
+      setHealReport(null);
+      setHealHistorical(false);
       setHealError(null);
       setHealPreview(null);
       setHealUndoState({ available: false });
@@ -654,6 +656,7 @@ export function App() {
     const report = engine.getLastOperation();
     if (!report) return;
     setHealReport(report);
+    setSavedHealReport(report);
     setHealHistorical(false);
     setHealStorageFailed(!saveHealReport(report));
   };
@@ -697,6 +700,37 @@ export function App() {
 
   const handleApplyHeal = () => performHeal(false);
   const handleUndoHeal = () => performHeal(true);
+
+  const handleShowHealHistory = () => {
+    if (!savedHealReport) return;
+    setHealReport(savedHealReport);
+    setHealHistorical(true);
+    setHealError(null);
+  };
+
+  const handleDismissHealReport = () => {
+    setHealReport(null);
+    setHealHistorical(false);
+    setHealError(null);
+  };
+
+  const handleClearHealHistory = () => {
+    const cleared = clearHealReport();
+    setHealStorageFailed(!cleared);
+    setSavedHealReport(null);
+    if (healHistorical) {
+      setHealReport(null);
+      setHealHistorical(false);
+    }
+  };
+
+  const handleRescan = async () => {
+    const root = currentAssetRootRef.current;
+    if (!root || isLoading || healBusyRef.current) return;
+    setHealError(null);
+    await runAnalysisPipeline(root, currentAnimationClipsRef.current, fileName, fileSizeBytes);
+    setTreeRoot(buildSceneTree(root));
+  };
 
   // Export Repaired Copy v0.1
   const handleBuildRepairedExport = async (): Promise<RepairedExportResult | null> => {
@@ -790,10 +824,13 @@ export function App() {
   };
 
   const handleSeekAnimation = (normalized: number) => {
-    sceneManagerRef.current?.seekAnimation(normalized);
+    const clamped = Math.min(1, Math.max(0, normalized));
+    setAnimationTime(clamped * animationDuration);
+    sceneManagerRef.current?.seekAnimation(clamped);
   };
 
   const handleStepFrame = (forward: boolean) => {
+    setIsPlayingAnimation(false);
     sceneManagerRef.current?.stepAnimationFrame(forward ? 1 / 30 : -1 / 30);
   };
 
@@ -884,6 +921,7 @@ export function App() {
           fileName={fileName}
           renderMode={renderMode}
           triangleCount={summary?.triangleCount || 0}
+          modelHeight={summary?.boundingBox.size[1] || 0}
         />
 
         {/* Right: Technical Inspector & Diagnostic Panel */}
@@ -908,6 +946,11 @@ export function App() {
           healBusy={healBusy}
           healError={healError}
           healStorageFailed={healStorageFailed}
+          savedHealHistoryAvailable={Boolean(savedHealReport)}
+          onShowHealHistory={handleShowHealHistory}
+          onDismissHealReport={handleDismissHealReport}
+          onClearHealHistory={handleClearHealHistory}
+          onRescan={handleRescan}
           exportReport={exportReport}
           exportBusy={exportBusy}
           exportError={exportError}
