@@ -363,7 +363,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
                 <div className="rounded border border-[#2c3039] bg-[#17191e] px-1.5 py-1">
                   <span className="block text-gray-500">{t('heal.queue.remaining')}</span>
-                  <span className="text-cyan-300">{repairQueueState.remaining || repairQueue.length}</span>
+                  <span className="text-cyan-300">
+                    {repairQueueState.status === 'idle' ? repairQueue.length : repairQueueState.remaining}
+                  </span>
                 </div>
               </div>
 
