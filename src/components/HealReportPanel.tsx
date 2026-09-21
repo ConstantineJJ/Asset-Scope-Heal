@@ -42,6 +42,10 @@ export function HealReportPanel({
   }, [report?.operationId, report?.status, report?.undoneAt, historical]);
   if (!report) return null;
   const operation = getRepairOperation(report.operation);
+  const reportMetricKeys: Array<keyof typeof report.before> =
+    report.operation === 'recalculate-normals'
+      ? [...healMetricKeys, 'invalidNormals']
+      : [...healMetricKeys];
   const color = report.status === 'REGRESSION' ? 'text-rose-300 border-rose-800'
     : report.status === 'VERIFIED' ? 'text-emerald-300 border-emerald-800' : 'text-amber-300 border-amber-800';
   return (
@@ -66,12 +70,16 @@ export function HealReportPanel({
           <th className="text-left">{t('heal.report.metric')}</th>
           <th>{t('heal.report.before')}</th><th>{t('heal.report.after')}</th><th>{t('heal.report.delta')}</th>
         </tr></thead>
-        <tbody>{healMetricKeys.map(key => {
+        <tbody>{reportMetricKeys.map(key => {
+          const before = report.before[key];
           const after = report.after?.[key];
-          const delta = after === undefined ? null : after - report.before[key];
-          return <tr key={key} className="border-t border-gray-800">
-            <th className="text-left font-normal py-0.5">{t(`heal.metrics.${key}`)}</th>
-            <td className="text-center">{report.before[key]}</td>
+          const delta =
+            typeof before === 'number' && typeof after === 'number'
+              ? after - before
+              : null;
+          return <tr key={String(key)} className="border-t border-gray-800">
+            <th className="text-left font-normal py-0.5">{t(`heal.metrics.${String(key)}`)}</th>
+            <td className="text-center">{before ?? t('heal.report.unavailable')}</td>
             <td className="text-center">{after ?? t('heal.report.unavailable')}</td>
             <td className="text-center">{delta === null ? '—' : delta > 0 ? `+${delta}` : delta}</td>
           </tr>;
