@@ -51,5 +51,8 @@ export const ru = {
     why: 'Why',
     next: 'Next',
     repair: 'Repair',
+    previous: 'Назад',
+    nextIssue: 'Далее',
+    backToView: 'Вернуть вид',
   },
 } as const;
