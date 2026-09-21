@@ -1,26 +1,22 @@
 # Asset Doctor — Built-in Test Patient
 
-Asset Doctor now ships with one deterministic procedural test asset:
+Asset Doctor ships with one deterministic procedural test asset:
 
 `Asset Doctor Test Patient`
 
-The previous three demo samples were removed. The built-in asset is intentionally designed for regression testing of diagnostics and Surgical Heal rather than as a showcase model.
+The previous demo samples were removed. This asset exists for repeatable diagnostic, repair, Undo, export and reopen testing rather than visual showcase.
 
-## Included findings
+## Repairable findings
 
-### Repairable
-
-`Repair_Target_Degenerate_And_Loose_Vertices`
+### `Repair_Target_Degenerate_And_Loose_Vertices`
 
 Contains:
 
 - 1 degenerate triangle;
 - at least 1 needle / thin triangle;
-- 2 unreferenced vertices before any repair.
+- 2 unreferenced vertices before repair.
 
-After `Remove Degenerate Triangles`, the removed face leaves three additional vertices unreferenced, producing a deterministic second-stage test for `Remove Unreferenced Vertices`.
-
-Expected sequence:
+Expected sequential repair:
 
 ```
 Initial
@@ -37,42 +33,69 @@ unreferenced vertices = 0
 triangle count unchanged by vertex cleanup
 ```
 
-### Manual / diagnostic-only
+### `Repair_Target_Exact_Duplicate_Vertices`
 
-`Manual_Control_NonManifold_Edge`
+Contains duplicated shared-edge vertices with exactly matching:
 
-Contains three faces sharing one edge. This remains diagnostic-only until a dedicated non-manifold repair operation is implemented.
+- position;
+- normal;
+- UV.
 
-`Manual_Control_Zero_Normals`
+The guarded Exact Duplicate operation can weld these tuples because every protected vertex-domain attribute matches. The expected result is fewer vertices and improved connectivity without topology regression.
 
-Contains valid triangle topology with an intentionally zeroed normal stream. This is useful for testing normals diagnostics without pretending that a repair exists yet.
+### `Repair_Target_Zero_Normals`
 
-### Rig / animation control
+Contains valid topology with an intentionally zeroed normal stream.
 
-`Rig_Control_SkinnedMesh`
+`Recalculate Normals` should replace it with a valid normal attribute while preserving topology.
+
+### `Repair_Target_Missing_Normals`
+
+Contains valid topology and UVs but no normal attribute.
+
+`Recalculate Normals` should create the missing stream.
+
+### `Rig_Control_SkinnedMesh`
 
 Contains:
 
 - a small Skeleton;
-- skinIndex / skinWeight streams;
+- standard `skinIndex` / `skinWeight` streams;
+- two deliberately non-normalized but non-zero skin-weight rows;
 - one intentionally unused locator bone;
 - one animation clip: `Diagnostic_Bone_Sway`.
 
-This keeps rig, skinning and animation inspection testable while using only one built-in asset.
+`Normalize Skin Weights` should normalize only the non-zero weight rows. It must never invent influences for zero-weight vertices.
+
+## Manual / diagnostic-only findings
+
+### `Manual_Control_NonManifold_Edge`
+
+Three faces deliberately share one edge.
+
+This remains diagnostic-only. There is no universal safe automatic repair because the intended surface topology is ambiguous.
+
+Other conditions intentionally remain manual when evidence is insufficient, including:
+
+- zero-weight skin vertices;
+- missing UV unwrap;
+- unused bones / locator bones;
+- arbitrary tiny components;
+- needle triangles;
+- non-manifold topology.
 
 ## Purpose
 
-The test patient is not meant to represent a production-ready model.
+The Test Patient proves that Asset Doctor can:
 
-It is a deterministic specimen used to prove that Asset Doctor:
+1. detect known defects;
+2. offer repairs only where a registered surgical operation exists;
+3. preserve unresolved manual-only findings;
+4. perform sequential repairs safely;
+5. verify before / after measurements;
+6. Undo the last operation;
+7. export repaired geometry;
+8. reopen and verify the serialized GLB;
+9. preserve rig and animation structure.
 
-1. detects known defects;
-2. offers repairs only where a registered repair exists;
-3. preserves unresolved diagnostic-only findings;
-4. performs sequential repair safely;
-5. verifies Undo;
-6. exports repaired geometry;
-7. reopens and verifies the serialized GLB;
-8. continues to preserve rig and animation structure.
-
-A unit test locks the expected findings so accidental changes to the sample cannot silently invalidate manual regression testing.
+Automated tests lock the expected findings so changes to the specimen cannot silently invalidate manual regression testing.
