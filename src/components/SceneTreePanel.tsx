@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Box,
   ChevronDown,
@@ -39,6 +39,26 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
 
+  // Keep the root visible, but start complex assets folded at the first real branch.
+  // This prevents rigs / segmented models from exploding into hundreds of rows on load.
+  useEffect(() => {
+    if (!treeRoot) {
+      setCollapsedNodes({});
+      return;
+    }
+
+    const next: Record<string, boolean> = {};
+    const visit = (node: SceneNodeInfo, depth: number) => {
+      if (node.children?.length) {
+        next[node.uuid] = depth >= 1;
+        node.children.forEach((child) => visit(child, depth + 1));
+      }
+    };
+
+    visit(treeRoot, 0);
+    setCollapsedNodes(next);
+  }, [treeRoot?.uuid]);
+
   const toggleCollapse = (uuid: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setCollapsedNodes((prev) => ({ ...prev, [uuid]: !prev[uuid] }));
@@ -63,7 +83,7 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
   const renderNode = (node: SceneNodeInfo, depth: number = 0) => {
     const isSelected = selectedUuid === node.uuid;
     const hasChildren = node.children && node.children.length > 0;
-    const isCollapsed = !!collapsedNodes[node.uuid];
+    const isCollapsed = searchQuery ? false : !!collapsedNodes[node.uuid];
 
     const matchesSearch =
       !searchQuery || node.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -73,15 +93,20 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
         {matchesSearch && (
           <div
             onClick={() => onSelectNode(node.uuid)}
-            className={`group flex items-center justify-between px-2 py-1 text-xs cursor-pointer border-l-2 transition-colors ${
+            className={`group relative flex items-center justify-between pr-2 pl-1 py-1 text-xs cursor-pointer border-l-2 transition-colors ${
               isSelected
                 ? 'bg-blue-600/25 border-blue-500 text-white font-medium'
                 : 'border-transparent text-gray-300 hover:bg-[#20232a] hover:text-gray-100'
             }`}
-            style={{ paddingLeft: `${depth * 14 + 8}px` }}
           >
-            {/* Left: Expander, Icon, Name */}
-            <div className="flex items-center space-x-1.5 overflow-hidden pr-2">
+            {/* Left: compact lineage connector, expander, icon, name */}
+            <div className="flex items-center gap-1 overflow-hidden pr-2 min-w-0">
+              {depth > 0 && (
+                <span
+                  aria-hidden="true"
+                  className="w-1.5 h-px bg-[#39404b] shrink-0"
+                />
+              )}
               {hasChildren ? (
                 <button
                   onClick={(e) => toggleCollapse(node.uuid, e)}
@@ -149,7 +174,7 @@ export const SceneTreePanel: React.FC<SceneTreePanelProps> = ({
         )}
 
         {hasChildren && !isCollapsed && (
-          <div>
+          <div className="ml-1 border-l border-[#2b313a]">
             {node.children.map((child) => renderNode(child, depth + 1))}
           </div>
         )}
