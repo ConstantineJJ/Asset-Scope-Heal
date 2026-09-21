@@ -241,7 +241,9 @@ export interface TopologyStats {
 
 export type HealOperationKind =
   | 'remove-degenerate-triangles'
-  | 'remove-unreferenced-vertices';
+  | 'remove-unreferenced-vertices'
+  | 'recalculate-normals'
+  | 'merge-exact-duplicate-vertices';
 
 export interface HealPreview {
   reasonKey?: string;
@@ -257,7 +259,7 @@ export interface HealPreview {
   trianglesAfter: number;
   affectedTriangles: number;
   affectedCount: number;
-  metric: 'triangles' | 'vertices';
+  metric: 'triangles' | 'vertices' | 'normals' | 'duplicates';
   metricBefore: number;
   metricAfter: number;
   verticesBefore?: number;
@@ -288,7 +290,11 @@ export type HealVerificationStatus = 'VERIFIED' | 'PARTIAL' | 'REGRESSION';
 export type HealMetrics = Pick<TopologyStats,
   'triangleCount' | 'vertexCount' | 'degenerateTriangles' | 'boundaryEdges' |
   'nonManifoldEdges' | 'isolatedVertices' | 'componentsCount' | 'thinTriangles' |
-  'tinyComponentsCount' | 'potentialDuplicatePositions'>;
+  'tinyComponentsCount' | 'potentialDuplicatePositions'> & {
+    normalCount?: number;
+    invalidNormals?: number;
+    missingNormals?: number;
+  };
 
 /** Serializable audit evidence, never a persisted undo buffer or proof about a newly loaded asset. */
 export interface HealOperationReport {
@@ -339,6 +345,8 @@ export interface ExportVerificationReport {
   targetVerticesActual: number;
   targetUnreferencedExpected: number;
   targetUnreferencedActual: number;
+  targetInvalidNormalsExpected: number;
+  targetInvalidNormalsActual: number;
   meshCountExpected: number;
   meshCountActual: number;
   materialCountExpected: number;
