@@ -19,28 +19,34 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
   const total = (selector: (stat: TopologyStats) => number) =>
     topologyResults.reduce((sum, stat) => sum + selector(stat), 0);
 
-  const firstWith = (
-    selector: (stat: TopologyStats) => number,
-    localizationKey: keyof NonNullable<TopologyStats['localization']>
-  ) => {
-    const stat = topologyResults.find((entry) => selector(entry) > 0);
-    if (!stat) return undefined;
-    const sample = stat.localization?.[localizationKey];
-    return { stat, sample };
-  };
-
   const localize = (
     selector: (stat: TopologyStats) => number,
     localizationKey: keyof NonNullable<TopologyStats['localization']>
   ): Partial<HealthIssue> => {
-    const found = firstWith(selector, localizationKey);
-    if (!found) return {};
+    const locations = topologyResults.flatMap((stat) => {
+      if (selector(stat) <= 0) return [];
+      const samples =
+        stat.localizationSamples?.[localizationKey] ??
+        (stat.localization?.[localizationKey] ? [stat.localization[localizationKey]!] : []);
+      return samples.map((sample) => ({
+        meshUuid: stat.meshUuid,
+        meshName: stat.meshName,
+        affectedElement: sample.element,
+        affectedIndices: sample.affectedIndices,
+        focusPosition: sample.focusPoint,
+      }));
+    });
+
+    const first = locations[0];
+    if (!first) return {};
+
     return {
-      meshUuid: found.stat.meshUuid,
-      meshName: found.stat.meshName,
-      affectedIndices: found.sample?.affectedIndices,
-      affectedElement: found.sample?.element,
-      focusPosition: found.sample?.focusPoint,
+      meshUuid: first.meshUuid,
+      meshName: first.meshName,
+      affectedIndices: first.affectedIndices,
+      affectedElement: first.affectedElement,
+      focusPosition: first.focusPosition,
+      locations,
     };
   };
 
