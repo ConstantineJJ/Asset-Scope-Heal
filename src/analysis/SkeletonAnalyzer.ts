@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import type { BoneInfo } from '../types';
+import type { BoneInfo, DiagnosticLocation } from '../types';
+import { skinnedVertexWorldPosition } from './SkinWeightMeasure';
 
 export interface SkinningStats {
   skinnedMeshCount: number;
@@ -14,6 +15,7 @@ export interface SkinningStats {
 }
 
 export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats {
+  root.updateMatrixWorld(true);
   const bonesMap = new Map<string, THREE.Bone>();
   const skeletonsSet = new Set<THREE.Skeleton>();
   const skinnedMeshes: THREE.SkinnedMesh[] = [];
@@ -63,6 +65,8 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
   let maxInfluences = 0;
   let zeroWeightVertices = 0;
   let invalidWeightSumVertices = 0;
+  const zeroWeightLocations: DiagnosticLocation[] = [];
+  const invalidWeightLocations: DiagnosticLocation[] = [];
 
   for (const sm of skinnedMeshes) {
     const geom = sm.geometry;
@@ -97,8 +101,26 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
 
         if (activeInfluences === 0 || weightSum < 0.001) {
           zeroWeightVertices++;
+          if (zeroWeightLocations.length < 16) {
+            zeroWeightLocations.push({
+              meshUuid: sm.uuid,
+              meshName: sm.name || `SkinnedMesh_${sm.id}`,
+              affectedElement: 'vertex',
+              affectedIndices: [i],
+              focusPosition: skinnedVertexWorldPosition(sm, i),
+            });
+          }
         } else if (Math.abs(weightSum - 1.0) > 0.05) {
           invalidWeightSumVertices++;
+          if (invalidWeightLocations.length < 16) {
+            invalidWeightLocations.push({
+              meshUuid: sm.uuid,
+              meshName: sm.name || `SkinnedMesh_${sm.id}`,
+              affectedElement: 'vertex',
+              affectedIndices: [i],
+              focusPosition: skinnedVertexWorldPosition(sm, i),
+            });
+          }
         }
       }
     }
@@ -123,6 +145,8 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
     invalidWeightSumVertices,
     unusedBonesCount,
     bones,
+    invalidWeightLocations,
+    zeroWeightLocations,
   };
 }
 
