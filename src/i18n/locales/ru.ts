@@ -139,7 +139,7 @@ export const ru = {
     integrity: 'Integrity',
     fitness: 'Fitness',
     errors: 'Ошибки',
-    warnings: 'Предупреждения',
+    warnings: 'Внимание',
     info: 'Инфо',
     passed: 'Пройдено',
     clearFilters: 'Сбросить фильтры',
