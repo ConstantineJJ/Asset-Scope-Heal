@@ -51,5 +51,8 @@ export const en = {
     why: 'Why',
     next: 'Next',
     repair: 'Repair',
+    previous: 'Previous',
+    nextIssue: 'Next',
+    backToView: 'Back to View',
   },
 } as const;
