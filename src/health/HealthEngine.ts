@@ -170,6 +170,8 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       title: `Coincident vertex positions: ${totalDuplicates}`,
       description: `${totalDuplicates} vertices share near-identical spatial cells. glTF and real-time meshes may intentionally split vertices at UV seams and hard normal boundaries.`,
       count: totalDuplicates,
+      repairability: 'CONDITIONAL',
+      suggestedAction: 'Preview exact-duplicate merge. Only vertices with identical position and every vertex/morph attribute are eligible; topology-changing merges are blocked.',
       ...localize((s) => s.potentialDuplicatePositions, 'duplicatePosition'),
     });
   }
