@@ -270,6 +270,35 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
       return engine.previewRemoveDegenerateTriangles(root, mesh.uuid).status === 'BLOCKED' && !engine.applyPending(root).success;
     });
   }
+  fixtureTest('Verified live Heal state is exportable and later geometry edits are rejected', ({ root, mesh }, engine) => {
+    engine.previewRemoveDegenerateTriangles(root, mesh.uuid);
+    engine.applyPending(root, 'ExportFixture.glb');
+    const id = engine.getLastOperation()!.operationId;
+    engine.completeVerification(id, true);
+    const verified = engine.getLastOperation()!;
+    const beforeEdit = engine.validateCurrentVerifiedState(root, verified).ok;
+    mesh.geometry.index!.setX(0, mesh.geometry.index!.getX(0) === 0 ? 1 : 0);
+    const afterEdit = engine.validateCurrentVerifiedState(root, verified);
+    return beforeEdit && !afterEdit.ok && afterEdit.reasonKey === 'export.errors.geometryChanged';
+  });
+
+  fixtureTest('Historical or undone Heal report cannot authorize export', ({ root, mesh }, engine) => {
+    engine.previewRemoveDegenerateTriangles(root, mesh.uuid);
+    engine.applyPending(root, 'ExportFixture.glb');
+    const id = engine.getLastOperation()!.operationId;
+    engine.completeVerification(id, true);
+    const report = engine.getLastOperation()!;
+
+    const historicalEngine = new SurgicalHealEngine();
+    const historicalBlocked = historicalEngine.validateCurrentVerifiedState(root, report).reasonKey === 'export.errors.historicalReport';
+
+    engine.undoLast(root);
+    const undone = engine.getLastOperation()!;
+    const undoneBlocked = engine.validateCurrentVerifiedState(root, undone).reasonKey === 'export.errors.healNotVerified';
+
+    return historicalBlocked && undoneBlocked;
+  });
+
   fixtureTest('Topology extraction respects interleaved attributes and local scale', ({ root, mesh }, engine) => {
     const data = new THREE.InterleavedBuffer(new Float32Array([
       0,0,0,99, 1,0,0,99, 0,1,0,99, 2,0,0,99, 3,0,0,99, 4,0,0,99,
