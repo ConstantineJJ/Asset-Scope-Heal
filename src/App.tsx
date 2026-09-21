@@ -510,7 +510,7 @@ export function App() {
 
   // Scene Tree Handlers
   const handleSelectNode = (uuid: string) => {
-    sceneManagerRef.current?.clearIssueLocalization();
+    sceneManagerRef.current?.cancelIssueInspection();
     setIsIssueFocusActive(false);
     setSelectedUuid(uuid);
     sceneManagerRef.current?.selectObject(uuid);
