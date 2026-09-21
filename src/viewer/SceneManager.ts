@@ -38,6 +38,7 @@ export class SceneManager {
   private skeletonHelper: THREE.SkeletonHelper | null = null;
   private selectionBoxHelper: THREE.BoxHelper | null = null;
   private issueMarker: THREE.Mesh | null = null;
+  private issueOverlay: THREE.Object3D | null = null;
 
   private isGridVisible: boolean = true;
   private isAxesVisible: boolean = true;
@@ -479,6 +480,144 @@ export class SceneManager {
       }
       this.issueMarker = null;
     }
+
+    if (this.issueOverlay) {
+      this.scene.remove(this.issueOverlay);
+      this.issueOverlay.traverse((obj) => {
+        const renderable = obj as THREE.LineSegments & {
+          geometry?: THREE.BufferGeometry;
+          material?: THREE.Material | THREE.Material[];
+        };
+        renderable.geometry?.dispose();
+        if (Array.isArray(renderable.material)) {
+          renderable.material.forEach((entry) => entry.dispose());
+        } else {
+          renderable.material?.dispose();
+        }
+      });
+      this.issueOverlay = null;
+    }
+  }
+
+  private getCurrentVertexWorld(mesh: THREE.Mesh, vertexIndex: number): THREE.Vector3 | null {
+    const position = mesh.geometry?.attributes?.position;
+    if (!position || vertexIndex < 0 || vertexIndex >= position.count) return null;
+
+    const point = new THREE.Vector3();
+
+    if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
+      const skinned = mesh as THREE.SkinnedMesh;
+      skinned.updateMatrixWorld(true);
+      skinned.skeleton?.update();
+      skinned.getVertexPosition(vertexIndex, point);
+    } else {
+      point.fromBufferAttribute(position as THREE.BufferAttribute, vertexIndex);
+    }
+
+    return point.applyMatrix4(mesh.matrixWorld);
+  }
+
+  private getTriangleVertexIndices(mesh: THREE.Mesh, triangleIndex: number): [number, number, number] | null {
+    const geometry = mesh.geometry;
+    if (!geometry?.attributes?.position || triangleIndex < 0) return null;
+
+    const base = triangleIndex * 3;
+    if (geometry.index) {
+      if (base + 2 >= geometry.index.count) return null;
+      return [
+        geometry.index.getX(base),
+        geometry.index.getX(base + 1),
+        geometry.index.getX(base + 2),
+      ];
+    }
+
+    if (base + 2 >= geometry.attributes.position.count) return null;
+    return [base, base + 1, base + 2];
+  }
+
+  private buildIssueOverlay(mesh: THREE.Mesh, issue: HealthIssue): THREE.Vector3 | null {
+    const indices = issue.affectedIndices ?? [];
+    if (indices.length === 0 || !issue.affectedElement) return null;
+
+    const overlayGroup = new THREE.Group();
+    overlayGroup.name = '__ascope_internal_issue_overlay';
+    overlayGroup.renderOrder = 9999;
+
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: 0xffb020,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 1,
+    });
+
+    const pointsMaterial = new THREE.PointsMaterial({
+      color: 0xffb020,
+      size: 8,
+      sizeAttenuation: false,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+    const currentPoints: THREE.Vector3[] = [];
+
+    if (issue.affectedElement === 'triangle') {
+      const triangle = this.getTriangleVertexIndices(mesh, indices[0]);
+      if (triangle) {
+        for (const vertexIndex of triangle) {
+          const point = this.getCurrentVertexWorld(mesh, vertexIndex);
+          if (point) currentPoints.push(point);
+        }
+        if (currentPoints.length === 3) {
+          const [a, b, c] = currentPoints;
+          const geometry = new THREE.BufferGeometry().setFromPoints([a, b, b, c, c, a]);
+          const overlay = new THREE.LineSegments(geometry, lineMaterial);
+          overlay.renderOrder = 9999;
+          overlayGroup.add(overlay);
+        }
+      }
+    } else if (issue.affectedElement === 'edge') {
+      for (const vertexIndex of indices.slice(0, 2)) {
+        const point = this.getCurrentVertexWorld(mesh, vertexIndex);
+        if (point) currentPoints.push(point);
+      }
+      if (currentPoints.length === 2) {
+        const geometry = new THREE.BufferGeometry().setFromPoints(currentPoints);
+        const overlay = new THREE.LineSegments(geometry, lineMaterial);
+        overlay.renderOrder = 9999;
+        overlayGroup.add(overlay);
+      }
+    } else {
+      for (const vertexIndex of indices.slice(0, 16)) {
+        const point = this.getCurrentVertexWorld(mesh, vertexIndex);
+        if (point) currentPoints.push(point);
+      }
+      if (currentPoints.length > 0) {
+        const geometry = new THREE.BufferGeometry().setFromPoints(currentPoints);
+        const overlay = new THREE.Points(geometry, pointsMaterial);
+        overlay.renderOrder = 9999;
+        overlayGroup.add(overlay);
+      }
+    }
+
+    if (overlayGroup.children.length === 0) {
+      lineMaterial.dispose();
+      pointsMaterial.dispose();
+      return null;
+    }
+
+    // Dispose whichever shared material is unused.
+    const hasLines = overlayGroup.children.some((child) => child instanceof THREE.LineSegments);
+    const hasPoints = overlayGroup.children.some((child) => child instanceof THREE.Points);
+    if (!hasLines) lineMaterial.dispose();
+    if (!hasPoints) pointsMaterial.dispose();
+
+    this.issueOverlay = overlayGroup;
+    this.scene.add(overlayGroup);
+
+    const center = new THREE.Vector3();
+    currentPoints.forEach((point) => center.add(point));
+    return currentPoints.length > 0 ? center.multiplyScalar(1 / currentPoints.length) : null;
   }
 
   public localizeIssue(issue: HealthIssue) {
@@ -492,8 +631,19 @@ export class SceneManager {
       }
     }
 
-    if (issue.focusPosition) {
-      const point = new THREE.Vector3(...issue.focusPosition);
+    const targetMesh = targetObject && (targetObject as THREE.Mesh).isMesh
+      ? (targetObject as THREE.Mesh)
+      : null;
+
+    // Recalculate the location from the currently rendered mesh when possible.
+    // This keeps localization useful for animated SkinnedMesh assets.
+    const liveFocus = targetMesh ? this.buildIssueOverlay(targetMesh, issue) : null;
+    const focusTuple: [number, number, number] | undefined = liveFocus
+      ? [liveFocus.x, liveFocus.y, liveFocus.z]
+      : issue.focusPosition;
+
+    if (focusTuple) {
+      const point = new THREE.Vector3(...focusTuple);
       let markerRadius = 0.02;
       let targetDistance: number | undefined;
 
@@ -522,7 +672,7 @@ export class SceneManager {
       this.issueMarker.renderOrder = 10000;
       this.scene.add(this.issueMarker);
 
-      this.cameraController.focusPosition(issue.focusPosition, targetDistance);
+      this.cameraController.focusPosition(focusTuple, targetDistance);
       return;
     }
 
@@ -689,6 +839,7 @@ export class SceneManager {
   }
 
   public disposeCurrentAsset() {
+    this.clearIssueLocalization();
     if (!this.currentAssetRoot) return;
 
     if (this.animationMixer) {

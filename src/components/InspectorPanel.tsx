@@ -425,8 +425,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                         <span className="text-gray-500">Location:</span>{' '}
                         <span className="text-cyan-200">
                           {issue.meshName ?? 'Affected mesh'}
+                          {issue.affectedElement ? ` · ${issue.affectedElement}` : ''}
                           {issue.affectedIndices?.length
-                            ? ` · indices [${issue.affectedIndices.slice(0, 8).join(', ')}${issue.affectedIndices.length > 8 ? ', …' : ''}]`
+                            ? ` [${issue.affectedIndices.slice(0, 8).join(', ')}${issue.affectedIndices.length > 8 ? ', …' : ''}]`
                             : ''}
                         </span>
                       </div>

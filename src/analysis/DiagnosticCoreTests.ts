@@ -241,6 +241,7 @@ export function runDiagnosticCoreTests(): DiagnosticCoreTestResult[] {
       passed:
         finding?.meshUuid === 'localized-mesh' &&
         finding.meshName === 'Body' &&
+        finding.affectedElement === 'triangle' &&
         finding.affectedIndices?.[0] === 7 &&
         finding.focusPosition?.[0] === 1 &&
         finding.focusPosition?.[1] === 2 &&

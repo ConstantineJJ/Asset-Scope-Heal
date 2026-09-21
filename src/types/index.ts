@@ -70,6 +70,7 @@ export interface HealthIssue {
   meshUuid?: string;
   count?: number;
   affectedIndices?: number[];
+  affectedElement?: 'triangle' | 'edge' | 'vertex' | 'component';
   focusPosition?: [number, number, number];
   technicalDetails?: string;
 }

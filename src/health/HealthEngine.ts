@@ -39,6 +39,7 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       meshUuid: found.stat.meshUuid,
       meshName: found.stat.meshName,
       affectedIndices: found.sample?.affectedIndices,
+      affectedElement: found.sample?.element,
       focusPosition: found.sample?.focusPoint,
     };
   };
