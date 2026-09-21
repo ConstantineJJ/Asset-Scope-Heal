@@ -733,7 +733,6 @@ export function App() {
       const result = await service.exportAndVerify({
         source,
         currentRoot: root,
-        currentAnimations: currentAnimationClipsRef.current,
         assetName: fileName,
         healReport: report,
       });
