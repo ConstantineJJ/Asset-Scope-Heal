@@ -639,6 +639,26 @@ export class SceneManager {
       sizeAttenuation: false,
       depthTest: false,
       depthWrite: false,
+      transparent: true,
+      opacity: 1,
+    });
+
+    const faceMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffb020,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.32,
+      side: THREE.DoubleSide,
+    });
+
+    const regionMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffb020,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.12,
+      side: THREE.DoubleSide,
     });
 
     const currentPoints: THREE.Vector3[] = [];
@@ -652,10 +672,17 @@ export class SceneManager {
         }
         if (currentPoints.length === 3) {
           const [a, b, c] = currentPoints;
-          const geometry = new THREE.BufferGeometry().setFromPoints([a, b, b, c, c, a]);
-          const overlay = new THREE.LineSegments(geometry, lineMaterial);
-          overlay.renderOrder = 9999;
-          overlayGroup.add(overlay);
+
+          const faceGeometry = new THREE.BufferGeometry().setFromPoints([a, b, c]);
+          faceGeometry.setIndex([0, 1, 2]);
+          const face = new THREE.Mesh(faceGeometry, faceMaterial);
+          face.renderOrder = 9998;
+          overlayGroup.add(face);
+
+          const edgeGeometry = new THREE.BufferGeometry().setFromPoints([a, b, b, c, c, a]);
+          const edgeOverlay = new THREE.LineSegments(edgeGeometry, lineMaterial);
+          edgeOverlay.renderOrder = 9999;
+          overlayGroup.add(edgeOverlay);
         }
       }
     } else if (issue.affectedElement === 'edge') {
@@ -669,8 +696,36 @@ export class SceneManager {
         overlay.renderOrder = 9999;
         overlayGroup.add(overlay);
       }
+    } else if (issue.affectedElement === 'component') {
+      for (const vertexIndex of indices.slice(0, 64)) {
+        const point = this.getCurrentVertexWorld(mesh, vertexIndex);
+        if (point) currentPoints.push(point);
+      }
+
+      if (currentPoints.length > 0) {
+        const pointGeometry = new THREE.BufferGeometry().setFromPoints(currentPoints);
+        const points = new THREE.Points(pointGeometry, pointsMaterial);
+        points.renderOrder = 9999;
+        overlayGroup.add(points);
+
+        const box = new THREE.Box3().setFromPoints(currentPoints);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const minThickness = Math.max(size.length() * 0.025, 0.002);
+        size.set(
+          Math.max(size.x, minThickness),
+          Math.max(size.y, minThickness),
+          Math.max(size.z, minThickness)
+        );
+        const zoneGeometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+        const zone = new THREE.Mesh(zoneGeometry, regionMaterial);
+        zone.position.copy(center);
+        zone.renderOrder = 9997;
+        overlayGroup.add(zone);
+      }
     } else {
-      for (const vertexIndex of indices.slice(0, 16)) {
+      // Vertex findings: render only the affected points, never an enclosing blob.
+      for (const vertexIndex of indices.slice(0, 64)) {
         const point = this.getCurrentVertexWorld(mesh, vertexIndex);
         if (point) currentPoints.push(point);
       }
@@ -685,14 +740,23 @@ export class SceneManager {
     if (overlayGroup.children.length === 0) {
       lineMaterial.dispose();
       pointsMaterial.dispose();
+      faceMaterial.dispose();
+      regionMaterial.dispose();
       return null;
     }
 
-    // Dispose whichever shared material is unused.
     const hasLines = overlayGroup.children.some((child) => child instanceof THREE.LineSegments);
     const hasPoints = overlayGroup.children.some((child) => child instanceof THREE.Points);
+    const hasFaces = overlayGroup.children.some(
+      (child) => child instanceof THREE.Mesh && child.material === faceMaterial
+    );
+    const hasRegions = overlayGroup.children.some(
+      (child) => child instanceof THREE.Mesh && child.material === regionMaterial
+    );
     if (!hasLines) lineMaterial.dispose();
     if (!hasPoints) pointsMaterial.dispose();
+    if (!hasFaces) faceMaterial.dispose();
+    if (!hasRegions) regionMaterial.dispose();
 
     this.issueOverlay = overlayGroup;
     this.scene.add(overlayGroup);
