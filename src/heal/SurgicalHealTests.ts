@@ -10,6 +10,7 @@ import {
   previewRepairIssue,
 } from './framework/RepairRegistry';
 import type { HealthIssue } from '../types';
+import { createAssetDoctorTestPatient } from '../loaders/SampleModels';
 
 export interface SurgicalHealTestResult {
   name: string;
@@ -541,6 +542,54 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
     } finally {
       mesh.geometry.dispose();
       (mesh.material as THREE.Material).dispose();
+    }
+  });
+
+  test('Asset Doctor Test Patient exposes deterministic repairable and manual-review findings', () => {
+    const sample = createAssetDoctorTestPatient();
+    const meshes: THREE.Mesh[] = [];
+    sample.root.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) meshes.push(obj as THREE.Mesh);
+    });
+
+    try {
+      const repairTarget = meshes.find((mesh) => mesh.name === 'Repair_Target_Degenerate_And_Loose_Vertices');
+      const nonManifold = meshes.find((mesh) => mesh.name === 'Manual_Control_NonManifold_Edge');
+      const zeroNormals = meshes.find((mesh) => mesh.name === 'Manual_Control_Zero_Normals');
+      const rig = meshes.find((mesh) => mesh.name === 'Rig_Control_SkinnedMesh') as THREE.SkinnedMesh | undefined;
+
+      if (!repairTarget || !nonManifold || !zeroNormals || !rig) return false;
+
+      const repairStats = analyzeMeshTopology(meshTopologyData(repairTarget));
+      const nonManifoldStats = analyzeMeshTopology(meshTopologyData(nonManifold));
+      const normals = zeroNormals.geometry.getAttribute('normal');
+      let allNormalsZero = true;
+      for (let i = 0; i < normals.count; i++) {
+        if (normals.getX(i) !== 0 || normals.getY(i) !== 0 || normals.getZ(i) !== 0) {
+          allNormalsZero = false;
+          break;
+        }
+      }
+
+      return sample.id === 'test-patient' &&
+        meshes.length === 4 &&
+        repairStats.degenerateTriangles === 1 &&
+        repairStats.isolatedVertices === 2 &&
+        repairStats.thinTriangles >= 1 &&
+        nonManifoldStats.nonManifoldEdges === 1 &&
+        allNormalsZero &&
+        rig.isSkinnedMesh === true &&
+        rig.skeleton.bones.some((bone) => bone.name === 'UnusedLocator') &&
+        sample.animations.length === 1 &&
+        sample.animations[0].name === 'Diagnostic_Bone_Sway';
+    } finally {
+      const materials = new Set<THREE.Material>();
+      for (const mesh of meshes) {
+        mesh.geometry.dispose();
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        mats.forEach((material) => materials.add(material));
+      }
+      materials.forEach((material) => material.dispose());
     }
   });
 
