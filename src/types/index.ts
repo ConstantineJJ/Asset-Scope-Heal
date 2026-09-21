@@ -326,6 +326,8 @@ export interface ExportVerificationReport {
   meshCountActual: number;
   materialCountExpected: number;
   materialCountActual: number;
+  textureCountExpected: number;
+  textureCountActual: number;
   skinnedMeshCountExpected: number;
   skinnedMeshCountActual: number;
   boneCountExpected: number;
