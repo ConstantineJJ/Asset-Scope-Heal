@@ -85,6 +85,10 @@ export const ru = {
       skinnedMeshCount: 'Количество SkinnedMesh изменилось.',
       boneCount: 'Количество bones изменилось.',
       clipCount: 'Количество animation clips изменилось.',
+      meshStructure: 'Структура meshes, их имена, типы, vertices или tris изменилась после сериализации.',
+      materialStructure: 'Структура материалов изменилась после сериализации.',
+      rigStructure: 'Структура Rig / bones изменилась после сериализации.',
+      animationStructure: 'Имена, длительность или число tracks в анимациях изменились после сериализации.',
     },
     errors: {
       unavailable: 'Экспорт доступен только для текущего полностью VERIFIED результата Heal.',
