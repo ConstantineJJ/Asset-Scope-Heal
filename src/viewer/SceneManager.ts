@@ -38,6 +38,8 @@ export class SceneManager {
   private skeletonHelper: THREE.SkeletonHelper | null = null;
   private selectionBoxHelper: THREE.BoxHelper | null = null;
   private issueOverlay: THREE.Object3D | null = null;
+  private orientationWidget: HTMLDivElement | null = null;
+  private orientationAxes: Record<'x' | 'y' | 'z', { line: SVGLineElement; label: SVGTextElement }> | null = null;
   private issueReturnView: {
     position: THREE.Vector3;
     target: THREE.Vector3;
@@ -92,6 +94,7 @@ export class SceneManager {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     container.appendChild(this.renderer.domElement);
+    this.initOrientationWidget();
 
     this.cameraController = new CameraController(this.camera, this.renderer.domElement);
     this.lightingManager = new LightingManager(this.scene);
@@ -101,6 +104,92 @@ export class SceneManager {
     this.initHelpers();
     this.bindEvents();
     this.startRenderLoop();
+  }
+
+  private initOrientationWidget() {
+    const host = document.createElement('div');
+    host.setAttribute('aria-label', 'Viewport orientation gizmo');
+    Object.assign(host.style, {
+      position: 'absolute',
+      right: '10px',
+      bottom: '10px',
+      width: '66px',
+      height: '66px',
+      pointerEvents: 'none',
+      zIndex: '12',
+      opacity: '0.85',
+      background: 'rgba(19, 21, 24, 0.58)',
+      border: '1px solid rgba(75, 85, 99, 0.45)',
+      borderRadius: '50%',
+      backdropFilter: 'blur(2px)',
+    });
+
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 64 64');
+    svg.setAttribute('width', '64');
+    svg.setAttribute('height', '64');
+
+    const makeAxis = (key: 'x' | 'y' | 'z', color: string, labelText: string) => {
+      const line = document.createElementNS(ns, 'line');
+      line.setAttribute('x1', '32');
+      line.setAttribute('y1', '32');
+      line.setAttribute('x2', '32');
+      line.setAttribute('y2', '12');
+      line.setAttribute('stroke', color);
+      line.setAttribute('stroke-width', '2');
+      line.setAttribute('stroke-linecap', 'round');
+
+      const label = document.createElementNS(ns, 'text');
+      label.textContent = labelText;
+      label.setAttribute('x', '32');
+      label.setAttribute('y', '9');
+      label.setAttribute('fill', color);
+      label.setAttribute('font-size', '9');
+      label.setAttribute('font-family', 'monospace');
+      label.setAttribute('font-weight', '700');
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('dominant-baseline', 'middle');
+
+      svg.appendChild(line);
+      svg.appendChild(label);
+      return { line, label };
+    };
+
+    this.orientationAxes = {
+      x: makeAxis('x', '#ef4444', 'X'),
+      y: makeAxis('y', '#22c55e', 'Y'),
+      z: makeAxis('z', '#3b82f6', 'Z'),
+    };
+
+    host.appendChild(svg);
+    this.container.appendChild(host);
+    this.orientationWidget = host;
+  }
+
+  private updateOrientationWidget() {
+    if (!this.orientationAxes) return;
+
+    const inverseCamera = this.camera.quaternion.clone().invert();
+    const axes: Array<['x' | 'y' | 'z', THREE.Vector3]> = [
+      ['x', new THREE.Vector3(1, 0, 0)],
+      ['y', new THREE.Vector3(0, 1, 0)],
+      ['z', new THREE.Vector3(0, 0, 1)],
+    ];
+
+    for (const [key, direction] of axes) {
+      direction.applyQuaternion(inverseCamera);
+      const x = 32 + direction.x * 22;
+      const y = 32 - direction.y * 22;
+      const opacity = String(0.45 + Math.max(0, direction.z + 1) * 0.275);
+      const parts = this.orientationAxes[key];
+      parts.line.setAttribute('x2', x.toFixed(2));
+      parts.line.setAttribute('y2', y.toFixed(2));
+      parts.line.setAttribute('opacity', opacity);
+      parts.label.setAttribute('x', x.toFixed(2));
+      parts.label.setAttribute('y', y.toFixed(2));
+      parts.label.setAttribute('opacity', opacity);
+    }
   }
 
   private initHelpers() {
@@ -825,6 +914,7 @@ export class SceneManager {
       }
 
       this.cameraController.update();
+      this.updateOrientationWidget();
 
       if (this.selectionBoxHelper) {
         this.selectionBoxHelper.update();
@@ -913,6 +1003,11 @@ export class SceneManager {
     window.removeEventListener('resize', this.onWindowResize);
 
     this.disposeCurrentAsset();
+    if (this.orientationWidget?.parentNode) {
+      this.orientationWidget.parentNode.removeChild(this.orientationWidget);
+    }
+    this.orientationWidget = null;
+    this.orientationAxes = null;
     this.cameraController.dispose();
     this.lightingManager.dispose();
     this.renderModeManager.dispose();
