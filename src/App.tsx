@@ -26,6 +26,7 @@ import { analyzeNormalsAndUv } from './analysis/NormalsAndUvAnalyzer';
 import type {
   AnimationClipInfo,
   AssetSummary,
+  DiagnosticProfileId,
   HealthIssue,
   LightingConfig,
   LightingPreset,
@@ -55,6 +56,19 @@ export function App() {
   const [materials, setMaterials] = useState<MaterialInfo[]>([]);
   const [textures, setTextures] = useState<TextureInfo[]>([]);
   const [healthIssues, setHealthIssues] = useState<HealthIssue[]>([]);
+  const [diagnosticProfileId, setDiagnosticProfileId] = useState<DiagnosticProfileId>('general');
+  const analysisSnapshotRef = useRef<{
+    summary: AssetSummary;
+    materials: MaterialInfo[];
+    textures: TextureInfo[];
+    skeleton: ReturnType<typeof analyzeSkeleton>;
+    animations: AnimationClipInfo[];
+    transforms: HealthIssue[];
+    normalsAndUv: HealthIssue[];
+    topology: TopologyStats[];
+    totalTracks: number;
+  } | null>(null);
+
   const [progressiveState, setProgressiveState] = useState<ProgressiveAnalysisState>({
     geometry: 'pending',
     materials: 'pending',
@@ -170,6 +184,42 @@ export function App() {
     return null;
   };
 
+  const rebuildDiagnosticReport = useCallback(
+    (profileId: DiagnosticProfileId, topologyOverride?: TopologyStats[]) => {
+      const snapshot = analysisSnapshotRef.current;
+      if (!snapshot) return;
+
+      const topology = topologyOverride ?? snapshot.topology;
+      const performance = analyzePerformance(
+        snapshot.summary,
+        snapshot.textures,
+        snapshot.totalTracks,
+        profileId
+      );
+
+      const issues = HealthEngine.aggregate({
+        summary: snapshot.summary,
+        profileId,
+        materials: snapshot.materials,
+        textures: snapshot.textures,
+        skeleton: snapshot.skeleton,
+        animations: snapshot.animations,
+        transforms: snapshot.transforms,
+        performance,
+        normalsAndUv: snapshot.normalsAndUv,
+        topology,
+      });
+
+      setHealthIssues(issues);
+    },
+    []
+  );
+
+  // Profile changes reinterpret Fitness without rerunning expensive topology analysis.
+  useEffect(() => {
+    rebuildDiagnosticReport(diagnosticProfileId);
+  }, [diagnosticProfileId, rebuildDiagnosticReport]);
+
   // Analysis Pipeline Execution
   const runAnalysisPipeline = useCallback(
     async (
@@ -197,8 +247,19 @@ export function App() {
       const anims = analyzeAnimations(clips, skel.rootBoneNames);
       const xforms = analyzeTransforms(root);
       const totalTracks = clips.reduce((acc, c) => acc + c.tracks.length, 0);
-      const perfs = analyzePerformance(geomSummary, texs, totalTracks);
       const normalsUv = analyzeNormalsAndUv(root);
+
+      analysisSnapshotRef.current = {
+        summary: geomSummary,
+        materials: mats,
+        textures: texs,
+        skeleton: skel,
+        animations: anims,
+        transforms: xforms,
+        normalsAndUv: normalsUv,
+        topology: [],
+        totalTracks,
+      };
 
       setSummary(geomSummary);
       setMaterials(mats);
@@ -217,19 +278,8 @@ export function App() {
         performance: 'done',
       }));
 
-      // Initial health engine calculation (without topology yet)
-      const initialIssues = HealthEngine.aggregate({
-        summary: geomSummary,
-        materials: mats,
-        textures: texs,
-        skeleton: skel,
-        animations: anims,
-        transforms: xforms,
-        performance: perfs,
-        normalsAndUv: normalsUv,
-        topology: [],
-      });
-      setHealthIssues(initialIssues);
+      // Initial Diagnostic Core calculation (without topology yet).
+      rebuildDiagnosticReport(diagnosticProfileId, []);
 
       // 2. Heavy Topology Analysis in Worker
       if (workerManagerRef.current) {
@@ -240,27 +290,35 @@ export function App() {
 
           setProgressiveState((prev) => ({ ...prev, topology: 'done' }));
 
-          // Aggregate final health report with complete topology statistics!
-          const completeIssues = HealthEngine.aggregate({
-            summary: geomSummary,
-            materials: mats,
-            textures: texs,
-            skeleton: skel,
-            animations: anims,
-            transforms: xforms,
-            performance: perfs,
-            normalsAndUv: normalsUv,
-            topology: topologyResults,
-          });
-
-          setHealthIssues(completeIssues);
+          // Preserve expensive topology results, then reinterpret the full report
+          // through the currently selected Diagnostic Profile.
+          if (analysisSnapshotRef.current) {
+            analysisSnapshotRef.current.topology = topologyResults;
+          }
+          rebuildDiagnosticReport(diagnosticProfileId, topologyResults);
         } catch (err) {
           console.warn('Topology worker error:', err);
           setProgressiveState((prev) => ({ ...prev, topology: 'error' }));
+          rebuildDiagnosticReport(diagnosticProfileId);
+          setHealthIssues((prev) => [
+            ...prev.filter((issue) => issue.id !== 'topology-analysis-unknown'),
+            {
+              id: 'topology-analysis-unknown',
+              category: 'Topology',
+              severity: 'UNKNOWN',
+              layer: 'Health',
+              title: 'Topology analysis unavailable',
+              description: 'The background topology pass did not complete, so topology health cannot be determined reliably for this asset.',
+              evidence: err instanceof Error ? err.message : String(err),
+              whyItMatters: 'Asset Doctor should not infer topology health from incomplete data.',
+              suggestedAction: 'Retry analysis or inspect the worker error before making topology-related repair decisions.',
+              repairability: 'NONE',
+            },
+          ]);
         }
       }
     },
-    []
+    [diagnosticProfileId, rebuildDiagnosticReport]
   );
 
   // Load an Asset (from procedural sample or loaded File)
@@ -592,6 +650,8 @@ export function App() {
           materials={materials}
           textures={textures}
           selectedNode={selectedNode}
+          diagnosticProfileId={diagnosticProfileId}
+          onSetDiagnosticProfile={setDiagnosticProfileId}
           lightingConfig={lightingConfig}
           onUpdateLighting={handleUpdateLighting}
           onFocusIssue={handleFocusIssue}

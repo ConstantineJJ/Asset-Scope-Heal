@@ -22,6 +22,8 @@ import {
 } from 'lucide-react';
 import type {
   AssetSummary,
+  DiagnosticLayer,
+  DiagnosticProfileId,
   HealthCategory,
   HealthIssue,
   HealthSeverity,
@@ -31,6 +33,7 @@ import type {
   SceneNodeInfo,
   TextureInfo,
 } from '../types';
+import { DIAGNOSTIC_PROFILES } from '../health/DiagnosticProfiles';
 
 interface InspectorPanelProps {
   summary: AssetSummary | null;
@@ -39,6 +42,8 @@ interface InspectorPanelProps {
   materials: MaterialInfo[];
   textures: TextureInfo[];
   selectedNode: SceneNodeInfo | null;
+  diagnosticProfileId: DiagnosticProfileId;
+  onSetDiagnosticProfile: (profileId: DiagnosticProfileId) => void;
   lightingConfig: LightingConfig;
   onUpdateLighting: (config: Partial<LightingConfig>) => void;
   onFocusIssue: (issue: HealthIssue) => void;
@@ -52,6 +57,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   materials,
   textures,
   selectedNode,
+  diagnosticProfileId,
+  onSetDiagnosticProfile,
   lightingConfig,
   onUpdateLighting,
   onFocusIssue,
@@ -63,10 +70,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
   const [severityFilter, setSeverityFilter] = useState<HealthSeverity | 'ALL'>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<HealthCategory | 'ALL'>('ALL');
+  const [layerFilter, setLayerFilter] = useState<DiagnosticLayer | 'ALL'>('ALL');
 
   const filteredIssues = healthIssues.filter((issue) => {
     if (severityFilter !== 'ALL' && issue.severity !== severityFilter) return false;
     if (categoryFilter !== 'ALL' && issue.category !== categoryFilter) return false;
+    if (layerFilter !== 'ALL' && issue.layer !== layerFilter) return false;
     return true;
   });
 
@@ -201,10 +210,40 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <div className="text-[10px] uppercase tracking-wider font-semibold text-cyan-400">Diagnostic Core v1</div>
                 <div className="text-[11px] text-gray-300 mt-0.5">Integrity → Health → Fitness</div>
               </div>
-              <span className="px-2 py-1 rounded bg-[#15171c] border border-[#2d313a] text-[9px] font-mono text-gray-400">
-                General Inspection
-              </span>
+              <select
+                value={diagnosticProfileId}
+                onChange={(e) => onSetDiagnosticProfile(e.target.value as DiagnosticProfileId)}
+                className="max-w-[180px] px-2 py-1 rounded bg-[#15171c] border border-[#2d313a] text-[9px] font-mono text-gray-300 focus:outline-none cursor-pointer"
+                title={DIAGNOSTIC_PROFILES[diagnosticProfileId].description}
+              >
+                {Object.values(DIAGNOSTIC_PROFILES).map((profile) => (
+                  <option key={profile.id} value={profile.id} className="bg-[#15171c]">
+                    {profile.label}
+                  </option>
+                ))}
+              </select>
             </div>
+
+            <div className="grid grid-cols-4 gap-1">
+              {(['ALL', 'Integrity', 'Health', 'Fitness'] as const).map((layer) => (
+                <button
+                  key={layer}
+                  onClick={() => setLayerFilter(layer)}
+                  className={`px-1.5 py-1 rounded border text-[9px] font-mono transition cursor-pointer ${
+                    layerFilter === layer
+                      ? 'bg-cyan-950/50 border-cyan-700 text-cyan-300'
+                      : 'bg-[#15171c] border-[#2d313a] text-gray-400 hover:text-gray-200'
+                  }`}
+                >
+                  {layer}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-[9px] text-gray-500 leading-relaxed">
+              {DIAGNOSTIC_PROFILES[diagnosticProfileId].description}
+            </div>
+
             {(severityCounts.NA > 0 || severityCounts.UNKNOWN > 0) && (
               <div className="text-[10px] text-gray-400 font-mono">
                 N/A: {severityCounts.NA} · Unknown: {severityCounts.UNKNOWN}
@@ -315,12 +354,16 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           <div className="space-y-2">
             <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1">
               <span>{filteredIssues.length} Diagnostic Rules Evaluated</span>
-              {severityFilter !== 'ALL' && (
+              {(severityFilter !== 'ALL' || categoryFilter !== 'ALL' || layerFilter !== 'ALL') && (
                 <button
-                  onClick={() => setSeverityFilter('ALL')}
+                  onClick={() => {
+                    setSeverityFilter('ALL');
+                    setCategoryFilter('ALL');
+                    setLayerFilter('ALL');
+                  }}
                   className="text-cyan-400 hover:underline cursor-pointer text-[10px]"
                 >
-                  Clear Filter
+                  Clear Filters
                 </button>
               )}
             </div>
@@ -379,6 +422,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   <div className="ml-6 pt-1.5 border-t border-[#262932] space-y-1 text-[10px]">
                     {issue.evidence && (
                       <div><span className="text-gray-500">Evidence:</span> <span className="text-gray-300">{issue.evidence}</span></div>
+                    )}
+                    {issue.whyItMatters && issue.whyItMatters !== issue.description && (
+                      <div><span className="text-gray-500">Why:</span> <span className="text-gray-300">{issue.whyItMatters}</span></div>
                     )}
                     {issue.suggestedAction && (
                       <div><span className="text-gray-500">Next:</span> <span className="text-gray-300">{issue.suggestedAction}</span></div>

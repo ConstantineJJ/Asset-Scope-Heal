@@ -40,7 +40,8 @@ export function analyzeTransforms(root: THREE.Object3D): HealthIssue[] {
     issues.push({
       id: 'transform-negative-scale',
       category: 'Transforms',
-      severity: 'ERROR',
+      severity: 'WARNING',
+      layer: 'Health',
       title: 'Negative scale detected',
       description: `${negativeScaleCount} object(s) have negative scale components, which inverts face winding and can invert normals.`,
       count: negativeScaleCount,

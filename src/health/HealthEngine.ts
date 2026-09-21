@@ -53,7 +53,8 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
     issues.push({
       id: 'topo-degenerate-triangles',
       category: 'Topology',
-      severity: 'ERROR',
+      severity: 'WARNING',
+      layer: 'Health',
       title: `Degenerate triangles: ${totalDegenerate}`,
       description: `${totalDegenerate} triangle(s) have collinear or zero-length edges with near-zero surface area. Can cause NaN values in lighting and physics.`,
       count: totalDegenerate,
@@ -75,7 +76,8 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
     issues.push({
       id: 'topo-non-manifold-edges',
       category: 'Topology',
-      severity: 'ERROR',
+      severity: 'WARNING',
+      layer: 'Health',
       title: `Non-manifold edges: ${totalNonManifold}`,
       description: `${totalNonManifold} edge(s) are shared by 3 or more faces. Invalid topology for solid volume, 3D printing, or collision hulls.`,
       count: totalNonManifold,
@@ -313,38 +315,56 @@ export function evaluateMaterialIssues(materials: MaterialInfo[]): HealthIssue[]
   return issues;
 }
 
-export function evaluateTextureIssues(
-  textures: TextureInfo[],
-  profileId: DiagnosticProfileId = 'general'
-): HealthIssue[] {
+export function evaluateTextureIssues(textures: TextureInfo[]): HealthIssue[] {
   const issues: HealthIssue[] = [];
-  const profile = getDiagnosticProfile(profileId);
   let nonPowerOfTwoCount = 0;
-  let texturesOverThreshold = 0;
+  let invalidDimensionCount = 0;
 
   function isPowerOfTwo(n: number) {
     return n > 0 && (n & (n - 1)) === 0;
   }
 
   for (const t of textures) {
-    if (t.width > profile.textureDimensionWarning || t.height > profile.textureDimensionWarning) {
-      texturesOverThreshold++;
+    if (!Number.isFinite(t.width) || !Number.isFinite(t.height) || t.width <= 0 || t.height <= 0) {
+      invalidDimensionCount++;
+      continue;
     }
-    if (t.width > 0 && t.height > 0) {
-      if (!isPowerOfTwo(t.width) || !isPowerOfTwo(t.height)) {
-        nonPowerOfTwoCount++;
-      }
+    if (!isPowerOfTwo(t.width) || !isPowerOfTwo(t.height)) {
+      nonPowerOfTwoCount++;
     }
   }
 
-  if (texturesOverThreshold > 0) {
+  if (invalidDimensionCount > 0) {
     issues.push({
-      id: 'tex-over-4096',
+      id: 'tex-invalid-dimensions',
       category: 'Textures',
-      severity: 'WARNING',
-      title: `Textures above ${profile.textureDimensionWarning}px: ${texturesOverThreshold}`,
-      description: `${texturesOverThreshold} texture(s) exceed the ${profile.label} reference dimension of ${profile.textureDimensionWarning}px. This is a target-fit warning, not a structural texture defect.`,
-      count: texturesOverThreshold,
+      severity: 'ERROR',
+      layer: 'Integrity',
+      title: `Invalid texture dimensions: ${invalidDimensionCount}`,
+      description: `${invalidDimensionCount} texture(s) have missing, non-finite, or non-positive dimensions.`,
+      count: invalidDimensionCount,
+      repairability: 'MANUAL',
+    });
+  } else if (textures.length > 0) {
+    issues.push({
+      id: 'tex-metadata-readable',
+      category: 'Textures',
+      severity: 'OK',
+      layer: 'Integrity',
+      title: 'Texture metadata is readable',
+      description: `All ${textures.length} detected texture(s) expose valid dimensions.`,
+      count: textures.length,
+      repairability: 'NONE',
+    });
+  } else {
+    issues.push({
+      id: 'tex-none',
+      category: 'Textures',
+      severity: 'N/A',
+      layer: 'Health',
+      title: 'No textures detected',
+      description: 'No texture images were detected in the loaded asset.',
+      repairability: 'NONE',
     });
   }
 
@@ -353,20 +373,11 @@ export function evaluateTextureIssues(
       id: 'tex-npot',
       category: 'Textures',
       severity: 'INFO',
+      layer: 'Health',
       title: `Non-power-of-two textures: ${nonPowerOfTwoCount}`,
-      description: `${nonPowerOfTwoCount} texture(s) do not follow power-of-two dimensions (e.g. 512, 1024, 2048). While supported in modern WebGL2, mipmap generation can be suboptimal.`,
+      description: `${nonPowerOfTwoCount} texture(s) do not use power-of-two dimensions. Modern WebGL2 supports them, so this is informational rather than a defect.`,
       count: nonPowerOfTwoCount,
-    });
-  }
-
-  if (textures.length > 0 && texturesOverThreshold === 0) {
-    issues.push({
-      id: 'tex-dimensions-ok',
-      category: 'Textures',
-      severity: 'OK',
-      title: 'Texture dimensions within safe limits',
-      description: `All ${textures.length} texture(s) stay at or below the ${profile.label} reference dimension of ${profile.textureDimensionWarning}px.`,
-      count: textures.length,
+      repairability: 'NONE',
     });
   }
 
@@ -604,7 +615,7 @@ export class HealthEngine {
     issues.push(...evaluateMaterialIssues(params.materials));
 
     // 2. Textures
-    issues.push(...evaluateTextureIssues(params.textures, profileId));
+    issues.push(...evaluateTextureIssues(params.textures));
 
     // 3. Skeleton / Skinning
     issues.push(...evaluateSkinningIssues(params.skeleton, profileId));

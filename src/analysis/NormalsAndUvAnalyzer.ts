@@ -53,6 +53,7 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
       id: 'normals-missing',
       category: 'Normals',
       severity: 'WARNING',
+      layer: 'Health',
       title: 'Missing vertex normals',
       description: `${missingNormalsCount} mesh(es) lack explicit vertex normal vectors. Flat or computed shading will be required.`,
       count: missingNormalsCount,
@@ -71,7 +72,8 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
     issues.push({
       id: 'normals-zero',
       category: 'Normals',
-      severity: 'ERROR',
+      severity: 'WARNING',
+      layer: 'Health',
       title: 'Zero-length normal vectors detected',
       description: `${zeroNormalsCount} mesh(es) contain zero-length or unnormalized normal attributes, causing black shading artifacts.`,
       count: zeroNormalsCount,

@@ -65,8 +65,8 @@ export function analyzePerformance(
       id: 'perf-draw-calls-ok',
       category: 'Performance',
       severity: 'OK',
-      title: 'Draw call budget optimal',
-      description: `Asset requires ~${estimatedDrawCalls} draw call(s), within the ${profile.label} reference threshold (${profile.drawCallWarning}).`,
+      title: 'Draw calls within profile reference',
+      description: `Asset requires ~${estimatedDrawCalls} draw call(s), within the ${profile.label} reference threshold (${profile.drawCallWarning}). This is a Fitness result, not a health verdict.`,
       count: estimatedDrawCalls,
     });
   }
@@ -82,7 +82,7 @@ export function analyzePerformance(
     });
   }
 
-  if (largeTextureCount > 0 && ultraLargeTextureCount === 0) {
+  if (largeTextureCount > 0 && ultraLargeTextureCount === 0 && profile.textureDimensionWarning > 2048) {
     issues.push({
       id: 'perf-large-textures-info',
       category: 'Textures',
