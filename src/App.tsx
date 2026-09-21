@@ -15,6 +15,7 @@ import {
 } from './loaders/SampleModels';
 import { WorkerManager } from './workers/WorkerManager';
 import { HealthEngine } from './health/HealthEngine';
+import { SurgicalHealEngine } from './heal/SurgicalHealEngine';
 import { analyzeGeometry } from './analysis/GeometryAnalyzer';
 import { analyzeMaterials } from './analysis/MaterialAnalyzer';
 import { analyzeTextures } from './analysis/TextureAnalyzer';
@@ -28,6 +29,8 @@ import type {
   AssetSummary,
   DiagnosticProfileId,
   HealthIssue,
+  HealPreview,
+  HealUndoState,
   LightingConfig,
   LightingPreset,
   MaterialInfo,
@@ -44,6 +47,11 @@ export function App() {
   const loaderServiceRef = useRef<GLBLoaderService | null>(null);
   const workerManagerRef = useRef<WorkerManager | null>(null);
   const currentAssetRootRef = useRef<THREE.Group | null>(null);
+  const currentAnimationClipsRef = useRef<THREE.AnimationClip[]>([]);
+  const healEngineRef = useRef<SurgicalHealEngine | null>(null);
+  if (!healEngineRef.current) {
+    healEngineRef.current = new SurgicalHealEngine();
+  }
 
   // App States
   const [isLoading, setIsLoading] = useState(false);
@@ -119,6 +127,8 @@ export function App() {
   const [fps, setFps] = useState(60);
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [isIssueFocusActive, setIsIssueFocusActive] = useState(false);
+  const [healPreview, setHealPreview] = useState<HealPreview | null>(null);
+  const [healUndoState, setHealUndoState] = useState<HealUndoState>({ available: false });
 
   // Initialize Loader & Worker Services
   useEffect(() => {
@@ -342,6 +352,10 @@ export function App() {
     ) => {
       setIsLoading(true);
       currentAssetRootRef.current = root;
+      currentAnimationClipsRef.current = clips;
+      healEngineRef.current?.clear();
+      setHealPreview(null);
+      setHealUndoState({ available: false });
       setFileName(assetName);
       setFileSizeBytes(sizeBytes);
       setExplodedAmount(0);
@@ -558,6 +572,80 @@ export function App() {
     setIsIssueFocusActive(false);
   };
 
+  // Surgical Heal v0.1
+  const refreshAfterHeal = async () => {
+    const root = currentAssetRootRef.current;
+    if (!root) return;
+
+    sceneManagerRef.current?.cancelIssueInspection();
+    setIsIssueFocusActive(false);
+    setSelectedUuid(null);
+    setSelectedNode(null);
+    setTreeRoot(buildSceneTree(root));
+
+    await runAnalysisPipeline(
+      root,
+      currentAnimationClipsRef.current,
+      fileName,
+      fileSizeBytes
+    );
+  };
+
+  const handlePreviewHeal = (issue: HealthIssue) => {
+    const root = currentAssetRootRef.current;
+    const engine = healEngineRef.current;
+    if (!root || !engine || !issue.meshUuid) return;
+
+    if (issue.id !== 'topo-degenerate-triangles') {
+      return;
+    }
+
+    const preview = engine.previewRemoveDegenerateTriangles(root, issue.meshUuid);
+    setHealPreview(preview);
+
+    if (preview.status === 'READY') {
+      handleFocusIssue(issue);
+    }
+  };
+
+  const handleCancelHealPreview = () => {
+    healEngineRef.current?.cancelPreview();
+    setHealPreview(null);
+  };
+
+  const handleApplyHeal = async () => {
+    const root = currentAssetRootRef.current;
+    const engine = healEngineRef.current;
+    if (!root || !engine) return;
+
+    const result = engine.applyPending(root);
+    if (!result.success) {
+      setHealPreview((previous) =>
+        previous
+          ? { ...previous, status: 'BLOCKED', reason: result.reason ?? 'Repair could not be applied.' }
+          : null
+      );
+      return;
+    }
+
+    setHealPreview(null);
+    setHealUndoState(engine.getUndoState());
+    await refreshAfterHeal();
+  };
+
+  const handleUndoHeal = async () => {
+    const root = currentAssetRootRef.current;
+    const engine = healEngineRef.current;
+    if (!root || !engine) return;
+
+    const result = engine.undoLast(root);
+    if (!result.success) return;
+
+    setHealPreview(null);
+    setHealUndoState(engine.getUndoState());
+    await refreshAfterHeal();
+  };
+
   // Animation Handlers
   const handleSelectClip = (idx: number) => {
     setActiveClipIndex(idx);
@@ -677,6 +765,12 @@ export function App() {
           onFocusIssue={handleFocusIssue}
           isIssueFocusActive={isIssueFocusActive}
           onRestoreIssueView={handleRestoreIssueView}
+          healPreview={healPreview}
+          healUndoState={healUndoState}
+          onPreviewHeal={handlePreviewHeal}
+          onCancelHealPreview={handleCancelHealPreview}
+          onApplyHeal={handleApplyHeal}
+          onUndoHeal={handleUndoHeal}
           onSelectMeshByUuid={handleSelectNode}
         />
       </main>
