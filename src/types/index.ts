@@ -239,7 +239,9 @@ export interface TopologyStats {
   localizationSamples?: Partial<Record<TopologyLocalizationKind, TopologyLocalizationSample[]>>;
 }
 
-export type HealOperationKind = 'remove-degenerate-triangles';
+export type HealOperationKind =
+  | 'remove-degenerate-triangles'
+  | 'remove-unreferenced-vertices';
 
 export interface HealPreview {
   reasonKey?: string;
@@ -254,6 +256,13 @@ export interface HealPreview {
   trianglesBefore: number;
   trianglesAfter: number;
   affectedTriangles: number;
+  affectedCount: number;
+  metric: 'triangles' | 'vertices';
+  metricBefore: number;
+  metricAfter: number;
+  verticesBefore?: number;
+  verticesAfter?: number;
+  affectedVertices?: number;
   boundaryEdgesBefore: number;
   boundaryEdgesAfter: number;
   nonManifoldEdgesBefore: number;
@@ -268,6 +277,8 @@ export interface HealApplyResult {
   meshUuid?: string;
   meshName?: string;
   affectedTriangles?: number;
+  affectedCount?: number;
+  affectedVertices?: number;
   trianglesBefore?: number;
   trianglesAfter?: number;
   reason?: string;
@@ -303,6 +314,8 @@ export interface HealUndoState {
   operation?: HealOperationKind;
   meshName?: string;
   affectedTriangles?: number;
+  affectedCount?: number;
+  affectedVertices?: number;
 }
 
 export type ExportVerificationStatus = 'VERIFIED' | 'PARTIAL' | 'REGRESSION' | 'FAILED';
@@ -322,6 +335,10 @@ export interface ExportVerificationReport {
   targetTrianglesActual: number;
   targetDegeneratesExpected: number;
   targetDegeneratesActual: number;
+  targetVerticesExpected: number;
+  targetVerticesActual: number;
+  targetUnreferencedExpected: number;
+  targetUnreferencedActual: number;
   meshCountExpected: number;
   meshCountActual: number;
   materialCountExpected: number;
