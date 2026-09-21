@@ -3,24 +3,43 @@ import type { HealApplyResult, HealOperationReport, HealPreview, HealUndoState }
 import { analyzeMeshTopology } from '../analysis/TopologyAnalyzer';
 import { meshTopologyData } from '../analysis/MeshTopologyData';
 import { captureAttribute, captureGeometry, geometryMatches, type GeometrySnapshot } from './GeometrySnapshot';
-import { healMetrics, verifyHeal } from './HealVerification';
+import { healMetrics, verifyHealOperation } from './HealVerification';
+import {
+  geometryDataEquivalent,
+  planRemoveUnreferencedVertices,
+} from './GeometryRemap';
 
 type SupportedIndexArray = Uint8Array | Uint16Array | Uint32Array;
 
-interface PendingHeal {
-  preview: HealPreview;
-  geometryUuid: string;
-  replacementIndex: THREE.BufferAttribute;
-  snapshot: GeometrySnapshot;
-}
+type PendingHeal =
+  | {
+      mutation: 'index-only';
+      preview: HealPreview;
+      geometryUuid: string;
+      replacementIndex: THREE.BufferAttribute;
+      snapshot: GeometrySnapshot;
+    }
+  | {
+      mutation: 'geometry';
+      preview: HealPreview;
+      geometryUuid: string;
+      replacementGeometry: THREE.BufferGeometry;
+      snapshot: GeometrySnapshot;
+    };
+
+type UndoRestore =
+  | { mutation: 'index-only'; previousIndex: THREE.BufferAttribute }
+  | { mutation: 'geometry'; previousGeometry: THREE.BufferGeometry };
 
 interface UndoHeal {
   operation: HealPreview['operation'];
   meshUuid: string;
   meshName: string;
   geometryUuid: string;
-  previousIndex: THREE.BufferAttribute;
+  restore: UndoRestore;
   affectedTriangles: number;
+  affectedVertices: number;
+  affectedCount: number;
   appliedSnapshot: GeometrySnapshot;
   report: HealOperationReport;
 }
@@ -87,12 +106,24 @@ export class SurgicalHealEngine {
   }
 
   public clear() {
-    this.pending = null;
+    this.disposePending();
+    for (const entry of this.undoStack) {
+      if (entry.restore.mutation === 'geometry') {
+        entry.restore.previousGeometry.dispose();
+      }
+    }
     this.undoStack = [];
     this.lastOperation = null;
   }
 
   public cancelPreview() {
+    this.disposePending();
+  }
+
+  private disposePending() {
+    if (this.pending?.mutation === 'geometry') {
+      this.pending.replacementGeometry.dispose();
+    }
     this.pending = null;
   }
 
@@ -105,6 +136,8 @@ export class SurgicalHealEngine {
       operation: last.operation,
       meshName: last.meshName,
       affectedTriangles: last.affectedTriangles,
+      affectedVertices: last.affectedVertices,
+      affectedCount: last.affectedCount,
     };
   }
 
@@ -243,6 +276,13 @@ export class SurgicalHealEngine {
       trianglesBefore: triangleCount,
       trianglesAfter: triangleCount - degenerate.size,
       affectedTriangles: degenerate.size,
+      affectedCount: degenerate.size,
+      metric: 'triangles',
+      metricBefore: triangleCount,
+      metricAfter: triangleCount - degenerate.size,
+      verticesBefore: position.count,
+      verticesAfter: position.count,
+      affectedVertices: 0,
       boundaryEdgesBefore: beforeEdges.boundary,
       boundaryEdgesAfter: afterEdges.boundary,
       nonManifoldEdgesBefore: beforeEdges.nonManifold,
@@ -250,13 +290,92 @@ export class SurgicalHealEngine {
     };
 
     if (preview.status === 'READY') {
+      this.disposePending();
       this.pending = {
+        mutation: 'index-only',
         preview,
         geometryUuid: geometry.uuid,
         replacementIndex: replacement,
         snapshot: captureGeometry(geometry),
       };
     }
+
+    return preview;
+  }
+
+  public previewRemoveUnreferencedVertices(root: THREE.Object3D, meshUuid: string): HealPreview {
+    this.disposePending();
+
+    const obj = root.getObjectByProperty('uuid', meshUuid);
+    if (!obj || !(obj as THREE.Mesh).isMesh || (obj as THREE.InstancedMesh).isInstancedMesh) {
+      return this.blockedUnreferenced(meshUuid, 'Unknown or unsupported mesh');
+    }
+
+    const mesh = obj as THREE.Mesh;
+    const geometry = mesh.geometry;
+
+    let sharedUsers = 0;
+    root.traverse((candidate) => {
+      if ((candidate as THREE.Mesh).isMesh && (candidate as THREE.Mesh).geometry === geometry) {
+        sharedUsers++;
+      }
+    });
+    if (sharedUsers !== 1) {
+      return this.blockedUnreferenced(mesh.uuid, mesh.name || `Mesh_${mesh.id}`, 'heal.errors.sharedGeometry');
+    }
+
+    const planned = planRemoveUnreferencedVertices(geometry);
+    if ('reasonKey' in planned) {
+      return this.blockedUnreferenced(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        planned.reasonKey
+      );
+    }
+
+    let before;
+    try {
+      before = analyzeMeshTopology(meshTopologyData(mesh));
+    } catch {
+      planned.replacement.dispose();
+      return this.blockedUnreferenced(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        'heal.errors.beforeUnavailable'
+      );
+    }
+
+    const preview: HealPreview = {
+      operationId: THREE.MathUtils.generateUUID(),
+      operation: 'remove-unreferenced-vertices',
+      issueId: 'topo-isolated-vertices',
+      meshUuid: mesh.uuid,
+      meshName: mesh.name || `Mesh_${mesh.id}`,
+      status: 'READY',
+      risk: 'CONDITIONAL',
+      trianglesBefore: before.triangleCount,
+      trianglesAfter: before.triangleCount,
+      affectedTriangles: 0,
+      affectedCount: planned.removedVertices,
+      metric: 'vertices',
+      metricBefore: planned.verticesBefore,
+      metricAfter: planned.verticesAfter,
+      verticesBefore: planned.verticesBefore,
+      verticesAfter: planned.verticesAfter,
+      affectedVertices: planned.removedVertices,
+      boundaryEdgesBefore: before.boundaryEdges,
+      boundaryEdgesAfter: before.boundaryEdges,
+      nonManifoldEdgesBefore: before.nonManifoldEdges,
+      nonManifoldEdgesAfter: before.nonManifoldEdges,
+    };
+
+    this.pending = {
+      mutation: 'geometry',
+      preview,
+      geometryUuid: geometry.uuid,
+      replacementGeometry: planned.replacement,
+      snapshot: captureGeometry(geometry),
+    };
 
     return preview;
   }
@@ -268,68 +387,110 @@ export class SurgicalHealEngine {
     }
 
     const obj = root.getObjectByProperty('uuid', pending.preview.meshUuid);
-    if (!obj || !(obj as THREE.Mesh).isMesh) {
-      this.pending = null;
+    if (!obj || !(obj as THREE.Mesh).isMesh || (obj as THREE.InstancedMesh).isInstancedMesh) {
+      this.disposePending();
       return { success: false, reason: 'Target mesh is no longer available.' };
     }
 
     const mesh = obj as THREE.Mesh;
     const geometry = mesh.geometry;
     if (geometry.uuid !== pending.geometryUuid || !geometry.index) {
-      this.pending = null;
+      this.disposePending();
       return { success: false, reason: 'Geometry changed after preview. Preview must be regenerated.' };
     }
 
     if (!geometryMatches(geometry, pending.snapshot)) {
-      this.pending = null;
+      this.disposePending();
       return { success: false, reasonKey: 'heal.errors.stalePreview' };
     }
 
-    // Recheck scene-dependent gates too: a new mesh may now share this geometry.
-    const checked = this.previewRemoveDegenerateTriangles(root, mesh.uuid);
-    this.pending = null;
-    if (checked.status !== 'READY') return { success: false, reason: checked.reason, reasonKey: checked.reasonKey };
+    let sharedUsers = 0;
+    root.traverse(candidate => {
+      if ((candidate as THREE.Mesh).isMesh && (candidate as THREE.Mesh).geometry === geometry) sharedUsers++;
+    });
+    if (sharedUsers !== 1) {
+      this.disposePending();
+      return { success: false, reasonKey: 'heal.errors.sharedGeometry' };
+    }
 
     let before;
     try {
       before = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)));
     } catch {
+      this.disposePending();
       return { success: false, reasonKey: 'heal.errors.beforeUnavailable' };
     }
 
-    const expectedSnapshot = { ...pending.snapshot, entries: [
-      ...pending.snapshot.entries.slice(0, -1), captureAttribute(pending.replacementIndex),
-    ] };
-    const previousIndex = geometry.index.clone();
-    geometry.setIndex(pending.replacementIndex.clone());
-    geometry.index!.needsUpdate = true;
-    geometry.computeBoundingBox();
-    geometry.computeBoundingSphere();
+    let restore: UndoRestore;
+    let buffersMatch = false;
 
-    const appliedSnapshot = captureGeometry(geometry);
+    if (pending.mutation === 'index-only') {
+      const expectedSnapshot = {
+        ...pending.snapshot,
+        entries: [
+          ...pending.snapshot.entries.slice(0, -1),
+          captureAttribute(pending.replacementIndex),
+        ],
+      };
+      restore = { mutation: 'index-only', previousIndex: geometry.index.clone() };
+      geometry.setIndex(pending.replacementIndex.clone());
+      geometry.index!.needsUpdate = true;
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+      buffersMatch = geometryMatches(geometry, expectedSnapshot);
+    } else {
+      // Ownership of the current geometry moves to Undo; the planned replacement
+      // becomes the mesh's live geometry. No viewport-only material/transform state is touched.
+      restore = { mutation: 'geometry', previousGeometry: geometry };
+      mesh.geometry = pending.replacementGeometry;
+      buffersMatch = geometryDataEquivalent(mesh.geometry, pending.replacementGeometry);
+    }
+
+    const appliedGeometry = mesh.geometry;
+    const appliedSnapshot = captureGeometry(appliedGeometry);
+
     let after = null;
     try {
-      // Reread the actual mutated geometry. Never reuse the preview's predicted counts.
       after = healMetrics(analyzeMeshTopology(meshTopologyData(mesh)));
-    } catch { /* An unavailable postcheck must remain PARTIAL, with Undo retained. */ }
-    const verified = verifyHeal(before, after, pending.preview.affectedTriangles,
-      geometryMatches(geometry, expectedSnapshot));
+    } catch {
+      // An unavailable postcheck remains PARTIAL while Undo stays available.
+    }
+
+    const verified = verifyHealOperation(
+      pending.preview.operation,
+      before,
+      after,
+      pending.preview.affectedCount,
+      buffersMatch
+    );
+
     const report: HealOperationReport = {
-      version: 2, operationId: pending.preview.operationId, operation: pending.preview.operation,
-      assetName, meshUuid: mesh.uuid, meshName: pending.preview.meshName,
-      appliedAt: new Date().toISOString(), expectedRemoved: pending.preview.affectedTriangles,
-      before, after, targetStatus: verified.status,
+      version: 2,
+      operationId: pending.preview.operationId,
+      operation: pending.preview.operation,
+      assetName,
+      meshUuid: mesh.uuid,
+      meshName: pending.preview.meshName,
+      appliedAt: new Date().toISOString(),
+      expectedRemoved: pending.preview.affectedCount,
+      before,
+      after,
+      targetStatus: verified.status,
       status: verified.status === 'REGRESSION' ? 'REGRESSION' : 'PARTIAL',
-      pipeline: 'pending', reasons: verified.reasons,
+      pipeline: 'pending',
+      reasons: verified.reasons,
     };
+
     this.lastOperation = report;
     this.undoStack.push({
       operation: pending.preview.operation,
       meshUuid: mesh.uuid,
       meshName: pending.preview.meshName,
-      geometryUuid: geometry.uuid,
-      previousIndex,
+      geometryUuid: appliedGeometry.uuid,
+      restore,
       affectedTriangles: pending.preview.affectedTriangles,
+      affectedVertices: pending.preview.affectedVertices ?? 0,
+      affectedCount: pending.preview.affectedCount,
       appliedSnapshot,
       report,
     });
@@ -341,10 +502,13 @@ export class SurgicalHealEngine {
       meshUuid: mesh.uuid,
       meshName: pending.preview.meshName,
       affectedTriangles: pending.preview.affectedTriangles,
+      affectedVertices: pending.preview.affectedVertices,
+      affectedCount: pending.preview.affectedCount,
       trianglesBefore: pending.preview.trianglesBefore,
       trianglesAfter: after?.triangleCount,
     };
 
+    // For geometry mutation the replacement is now owned by the scene.
     this.pending = null;
     return result;
   }
@@ -374,12 +538,20 @@ export class SurgicalHealEngine {
     }
 
     const trianglesBeforeUndo = Math.floor((mesh.geometry.index?.count ?? 0) / 3);
-    mesh.geometry.setIndex(undo.previousIndex.clone());
-    mesh.geometry.index!.needsUpdate = true;
-    mesh.geometry.computeBoundingBox();
-    mesh.geometry.computeBoundingSphere();
+
+    if (undo.restore.mutation === 'index-only') {
+      mesh.geometry.setIndex(undo.restore.previousIndex.clone());
+      mesh.geometry.index!.needsUpdate = true;
+      mesh.geometry.computeBoundingBox();
+      mesh.geometry.computeBoundingSphere();
+    } else {
+      const repairedGeometry = mesh.geometry;
+      mesh.geometry = undo.restore.previousGeometry;
+      repairedGeometry.dispose();
+    }
+
     this.undoStack.pop();
-    this.pending = null;
+    this.disposePending();
     undo.report.undoneAt = new Date().toISOString();
     this.lastOperation = undo.report;
 
@@ -390,8 +562,10 @@ export class SurgicalHealEngine {
       meshUuid: mesh.uuid,
       meshName: undo.meshName,
       affectedTriangles: undo.affectedTriangles,
+      affectedVertices: undo.affectedVertices,
+      affectedCount: undo.affectedCount,
       trianglesBefore: trianglesBeforeUndo,
-      trianglesAfter: Math.floor(undo.previousIndex.count / 3),
+      trianglesAfter: Math.floor((mesh.geometry.index?.count ?? 0) / 3),
     };
   }
 
@@ -408,6 +582,46 @@ export class SurgicalHealEngine {
       trianglesBefore: 0,
       trianglesAfter: 0,
       affectedTriangles: 0,
+      affectedCount: 0,
+      metric: 'triangles',
+      metricBefore: 0,
+      metricAfter: 0,
+      verticesBefore: 0,
+      verticesAfter: 0,
+      affectedVertices: 0,
+      boundaryEdgesBefore: 0,
+      boundaryEdgesAfter: 0,
+      nonManifoldEdgesBefore: 0,
+      nonManifoldEdgesAfter: 0,
+    };
+  }
+
+  private blockedUnreferenced(
+    meshUuid: string,
+    meshName: string,
+    reasonKeyOrReason: string
+  ): HealPreview {
+    const isKey = reasonKeyOrReason.startsWith('heal.');
+    return {
+      operationId: `heal_blocked_unreferenced_${meshUuid}`,
+      operation: 'remove-unreferenced-vertices',
+      issueId: 'topo-isolated-vertices',
+      meshUuid,
+      meshName,
+      status: 'BLOCKED',
+      risk: 'CONDITIONAL',
+      reasonKey: isKey ? reasonKeyOrReason : undefined,
+      reason: isKey ? undefined : reasonKeyOrReason,
+      trianglesBefore: 0,
+      trianglesAfter: 0,
+      affectedTriangles: 0,
+      affectedCount: 0,
+      metric: 'vertices',
+      metricBefore: 0,
+      metricAfter: 0,
+      verticesBefore: 0,
+      verticesAfter: 0,
+      affectedVertices: 0,
       boundaryEdgesBefore: 0,
       boundaryEdgesAfter: 0,
       nonManifoldEdgesBefore: 0,
