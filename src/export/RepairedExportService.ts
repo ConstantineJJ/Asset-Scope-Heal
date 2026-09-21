@@ -13,6 +13,8 @@ import type {
   ExportVerificationReport,
   HealOperationReport,
 } from '../types';
+import { getRepairOperation } from '../heal/framework/RepairRegistry';
+import { copyGeometryData } from '../heal/GeometryRemap';
 
 export type ExportSampleId = 'drone' | 'topo-specimen' | 'rigged-robot';
 
@@ -57,7 +59,9 @@ export class RepairedExportService {
     const currentTargetStats = analyzeMeshTopology(meshTopologyData(currentMeshes[targetOrdinal]));
     if (
       currentTargetStats.triangleCount !== healReport.after.triangleCount ||
-      currentTargetStats.degenerateTriangles !== healReport.after.degenerateTriangles
+      currentTargetStats.vertexCount !== healReport.after.vertexCount ||
+      currentTargetStats.degenerateTriangles !== healReport.after.degenerateTriangles ||
+      currentTargetStats.isolatedVertices !== healReport.after.isolatedVertices
     ) {
       throw new Error('export.errors.geometryChanged');
     }
@@ -71,7 +75,15 @@ export class RepairedExportService {
         throw new Error('export.errors.structureMismatch');
       }
 
-      this.copyIndexBuffers(currentMeshes, freshMeshes);
+      const operation = getRepairOperation(healReport.operation);
+      if (!operation) {
+        throw new Error('export.errors.unsupportedRepair');
+      }
+      this.applyRepairPatch(
+        currentMeshes[targetOrdinal],
+        freshMeshes[targetOrdinal],
+        operation.capabilities.exportPatch
+      );
 
       // Expected structural values come from the pristine source, not the viewport.
       // Only triangle indices are allowed to differ.
@@ -127,15 +139,21 @@ export class RepairedExportService {
 
       let targetTrianglesActual = -1;
       let targetDegeneratesActual = -1;
+      let targetVerticesActual = -1;
+      let targetUnreferencedActual = -1;
       if (targetMesh) {
         const targetStats = analyzeMeshTopology(meshTopologyData(targetMesh));
         targetTrianglesActual = targetStats.triangleCount;
         targetDegeneratesActual = targetStats.degenerateTriangles;
+        targetVerticesActual = targetStats.vertexCount;
+        targetUnreferencedActual = targetStats.isolatedVertices;
       }
 
       if (actualSummary.triangleCount !== currentSummary.triangleCount) reasons.push('triangleCount');
       if (targetTrianglesActual !== healReport.after.triangleCount) reasons.push('targetTriangles');
       if (targetDegeneratesActual !== healReport.after.degenerateTriangles) reasons.push('targetDegenerates');
+      if (targetVerticesActual !== healReport.after.vertexCount) reasons.push('targetVertices');
+      if (targetUnreferencedActual !== healReport.after.isolatedVertices) reasons.push('targetUnreferenced');
       if (actualSummary.meshCount !== pristineSummary.meshCount) reasons.push('meshCount');
       if (actualSummary.materialCount !== pristineSummary.materialCount) reasons.push('materialCount');
       if (actualSummary.textureCount !== pristineSummary.textureCount) reasons.push('textureCount');
@@ -158,6 +176,10 @@ export class RepairedExportService {
         targetTrianglesActual,
         targetDegeneratesExpected: healReport.after.degenerateTriangles,
         targetDegeneratesActual,
+        targetVerticesExpected: healReport.after.vertexCount,
+        targetVerticesActual,
+        targetUnreferencedExpected: healReport.after.isolatedVertices,
+        targetUnreferencedActual,
         meshCountExpected: pristineSummary.meshCount,
         meshCountActual: actualSummary.meshCount,
         materialCountExpected: pristineSummary.materialCount,
@@ -224,20 +246,22 @@ export class RepairedExportService {
     return meshes;
   }
 
-  private copyIndexBuffers(currentMeshes: THREE.Mesh[], freshMeshes: THREE.Mesh[]) {
-    for (let i = 0; i < currentMeshes.length; i++) {
-      const current = currentMeshes[i];
-      const fresh = freshMeshes[i];
-      const currentPosition = current.geometry?.attributes?.position;
-      const freshPosition = fresh.geometry?.attributes?.position;
+  private applyRepairPatch(
+    current: THREE.Mesh,
+    fresh: THREE.Mesh,
+    patchKind: 'index-only' | 'geometry'
+  ) {
+    const currentPosition = current.geometry?.attributes?.position;
+    const freshPosition = fresh.geometry?.attributes?.position;
 
-      if (!fresh || !currentPosition || !freshPosition || currentPosition.count !== freshPosition.count) {
-        throw new Error('export.errors.structureMismatch');
-      }
-      if (
-        Boolean(current.geometry.index) !== Boolean(fresh.geometry.index) ||
-        (current as THREE.SkinnedMesh).isSkinnedMesh !== (fresh as THREE.SkinnedMesh).isSkinnedMesh
-      ) {
+    if (!currentPosition || !freshPosition ||
+        (current as THREE.SkinnedMesh).isSkinnedMesh !== (fresh as THREE.SkinnedMesh).isSkinnedMesh) {
+      throw new Error('export.errors.structureMismatch');
+    }
+
+    if (patchKind === 'index-only') {
+      if (currentPosition.count !== freshPosition.count ||
+          Boolean(current.geometry.index) !== Boolean(fresh.geometry.index)) {
         throw new Error('export.errors.structureMismatch');
       }
 
@@ -247,7 +271,17 @@ export class RepairedExportService {
         fresh.geometry.computeBoundingBox();
         fresh.geometry.computeBoundingSphere();
       }
+      return;
     }
+
+    if (!current.geometry.index || !fresh.geometry.index) {
+      throw new Error('export.errors.structureMismatch');
+    }
+
+    // Geometry repairs are copied into the pristine source at the geometry-data
+    // level only. Materials, transforms, visibility, rig pose and viewport state
+    // remain sourced from the clean asset.
+    copyGeometryData(fresh.geometry, current.geometry);
   }
 
   private meshSignature(meshes: THREE.Mesh[]) {
