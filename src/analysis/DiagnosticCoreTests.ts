@@ -249,5 +249,46 @@ export function runDiagnosticCoreTests(): DiagnosticCoreTestResult[] {
     });
   }
 
+  {
+    const topology: TopologyStats[] = [{
+      meshUuid: 'multi-mesh',
+      meshName: 'Body',
+      degenerateTriangles: 2,
+      degenerateIndices: [1, 8],
+      boundaryEdges: 0,
+      nonManifoldEdges: 0,
+      isolatedVertices: 0,
+      componentsCount: 1,
+      tinyComponentsCount: 0,
+      thinTriangles: 0,
+      potentialDuplicatePositions: 0,
+      minTriangleArea: 0,
+      maxTriangleArea: 1,
+      avgTriangleArea: 0.5,
+      denseTrianglesCount: 0,
+      triangleCount: 12,
+      vertexCount: 24,
+      localizationSamples: {
+        degenerate: [
+          { focusPoint: [1, 1, 1], affectedIndices: [1], element: 'triangle' },
+          { focusPoint: [2, 2, 2], affectedIndices: [8], element: 'triangle' },
+        ],
+      },
+    }];
+    const finding = aggregateTopologyIssues(topology).find((i) => i.id === 'topo-degenerate-triangles');
+    results.push({
+      name: 'Multiple Issue Locations Test',
+      description: 'One diagnostic finding can expose multiple representative locations for Previous/Next navigation.',
+      expected: '2 locations: triangles 1 and 8',
+      actual: finding?.locations
+        ? `${finding.locations.length} locations: ${finding.locations.map((loc) => loc.affectedIndices?.[0]).join(',')}`
+        : 'missing',
+      passed:
+        finding?.locations?.length === 2 &&
+        finding.locations[0].affectedIndices?.[0] === 1 &&
+        finding.locations[1].affectedIndices?.[0] === 8,
+    });
+  }
+
   return results;
 }
