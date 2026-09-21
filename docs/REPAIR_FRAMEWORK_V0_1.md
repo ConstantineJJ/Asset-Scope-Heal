@@ -55,9 +55,11 @@ Current export patch classes:
 - `index-only`
 - `geometry`
 
-Only `index-only` is implemented by the existing repair/export path today.
+Both patch classes are now implemented by the repair/export path:
+- `index-only` for repairs that change only triangle indices;
+- `geometry` for verified vertex-domain remaps.
 
-## Registered operation
+## Registered operations
 
 ### Remove Degenerate Triangles
 
@@ -71,7 +73,19 @@ Only `index-only` is implemented by the existing repair/export path today.
 
 The implementation still uses the proven SurgicalHealEngine v0.2 transaction path.
 
-The important change is that UI and App code now discover the repair through the registry rather than hard-coding the diagnostic ID.
+### Remove Unreferenced Vertices
+
+- diagnostic issue: `topo-isolated-vertices`
+- risk: `CONDITIONAL`
+- Preview: supported
+- Apply: supported
+- Verify: supported
+- Undo: supported
+- export patch: `geometry`
+
+The operation compacts every supported vertex-domain attribute and morph attribute using the same deterministic old-index → new-index map.
+
+The important architectural change is that UI and App code discover both repairs through the registry rather than hard-coding diagnostic IDs.
 
 ## Why this matters
 
@@ -85,27 +99,14 @@ Future repairs can be added as operations instead of branching throughout:
 
 This reduces the chance that every repair invents its own Preview / Apply / Undo behavior.
 
-## Next operation
+## Current direction
 
-The intended next operation is:
+The framework is now proven with two mutation classes:
 
-**Remove Unreferenced Vertices**
+1. index-only mutation;
+2. full vertex-domain geometry remap.
 
-Unlike the current index-only repair, this will need a `geometry` mutation contract because removing vertices requires deterministic remapping of every vertex-domain attribute.
-
-The implementation must preserve or remap, as applicable:
-
-- position
-- normal
-- tangent
-- UV sets
-- vertex colors
-- skinIndex
-- skinWeight
-- morph attributes
-- index buffer
-
-It must be blocked when Asset Doctor cannot prove that an attribute can be preserved correctly.
+New repair operations should reuse this lifecycle instead of adding special-case UI branches.
 
 ## Safety rule
 
