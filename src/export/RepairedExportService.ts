@@ -138,6 +138,7 @@ export class RepairedExportService {
       if (targetDegeneratesActual !== healReport.after.degenerateTriangles) reasons.push('targetDegenerates');
       if (actualSummary.meshCount !== pristineSummary.meshCount) reasons.push('meshCount');
       if (actualSummary.materialCount !== pristineSummary.materialCount) reasons.push('materialCount');
+      if (actualSummary.textureCount !== pristineSummary.textureCount) reasons.push('textureCount');
       if (actualSummary.skinnedMeshCount !== pristineSummary.skinnedMeshCount) reasons.push('skinnedMeshCount');
       if (actualSummary.boneCount !== pristineSummary.boneCount) reasons.push('boneCount');
       if (reopened.animations.length !== fresh.animations.length) reasons.push('clipCount');
@@ -161,6 +162,8 @@ export class RepairedExportService {
         meshCountActual: actualSummary.meshCount,
         materialCountExpected: pristineSummary.materialCount,
         materialCountActual: actualSummary.materialCount,
+        textureCountExpected: pristineSummary.textureCount,
+        textureCountActual: actualSummary.textureCount,
         skinnedMeshCountExpected: pristineSummary.skinnedMeshCount,
         skinnedMeshCountActual: actualSummary.skinnedMeshCount,
         boneCountExpected: pristineSummary.boneCount,
