@@ -439,11 +439,15 @@ export class SurgicalHealEngine {
       geometry.computeBoundingSphere();
       buffersMatch = geometryMatches(geometry, expectedSnapshot);
     } else {
-      // Ownership of the current geometry moves to Undo; the planned replacement
-      // becomes the mesh's live geometry. No viewport-only material/transform state is touched.
+      // Ownership of the current geometry moves to Undo. Apply a clone of the
+      // deterministic replacement so post-apply verification is independent of
+      // the preview object itself.
       restore = { mutation: 'geometry', previousGeometry: geometry };
-      mesh.geometry = pending.replacementGeometry;
-      buffersMatch = geometryDataEquivalent(mesh.geometry, pending.replacementGeometry);
+      const plannedGeometry = pending.replacementGeometry;
+      const appliedGeometryCandidate = plannedGeometry.clone();
+      mesh.geometry = appliedGeometryCandidate;
+      buffersMatch = geometryDataEquivalent(appliedGeometryCandidate, plannedGeometry);
+      plannedGeometry.dispose();
     }
 
     const appliedGeometry = mesh.geometry;
