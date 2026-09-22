@@ -94,6 +94,52 @@ export interface ProgressiveAnalysisState {
   topology: AnalysisStageStatus;
 }
 
+export type PerformanceStageId =
+  | 'initialLoad'
+  | 'firstDiagnosticPass'
+  | 'topologyWorker'
+  | 'rescan'
+  | 'repairPreview'
+  | 'applyVerification'
+  | 'export'
+  | 'reopenVerification';
+
+export interface PerformanceTimingSample {
+  lastMs: number;
+  bestMs: number;
+  worstMs: number;
+  averageMs: number;
+  samples: number;
+}
+
+export interface TopologyPerformanceStats {
+  meshCount: number;
+  cacheHits: number;
+  cacheMisses: number;
+  extractionMs: number;
+  workerMs: number;
+  transferredBytes: number;
+}
+
+export interface PerformanceMemoryStats {
+  sourceGlbBytes: number;
+  liveGeometryBytes: number;
+  undoSnapshotsBytes: number;
+  repairPreviewBytes: number;
+  exportBufferBytes: number;
+  pristineExportGeometryBytes: number;
+  reopenedVerificationGeometryBytes: number;
+  jsHeapUsedBytes?: number;
+  jsHeapLimitBytes?: number;
+}
+
+export interface PerformanceCoreProfile {
+  timings: Partial<Record<PerformanceStageId, PerformanceTimingSample>>;
+  topology: TopologyPerformanceStats;
+  memory: PerformanceMemoryStats;
+  cancelledAnalyses: number;
+}
+
 export interface SceneNodeInfo {
   uuid: string;
   name: string;
@@ -216,254 +262,4 @@ export interface AssetSummary {
   clipCount: number;
   clips: AnimationClipInfo[];
   boundingBox: BoundingBoxInfo;
-}
-
-export type TopologyLocalizationKind =
-  | 'degenerate'
-  | 'boundary'
-  | 'nonManifold'
-  | 'isolated'
-  | 'tinyComponent'
-  | 'thinTriangle'
-  | 'duplicatePosition'
-  | 'duplicateTriangle';
-
-export interface TopologyLocalizationSample {
-  focusPoint: [number, number, number];
-  affectedIndices?: number[];
-  element: 'triangle' | 'edge' | 'vertex' | 'component';
-}
-
-export interface DiagnosticLocation {
-  meshUuid: string;
-  meshName: string;
-  affectedElement: 'triangle' | 'edge' | 'vertex' | 'component';
-  affectedIndices?: number[];
-  focusPosition: [number, number, number];
-}
-
-export interface TopologyStats {
-  meshUuid: string;
-  meshName: string;
-  degenerateTriangles: number;
-  degenerateIndices: number[];
-  boundaryEdges: number;
-  nonManifoldEdges: number;
-  isolatedVertices: number;
-  componentsCount: number;
-  tinyComponentsCount: number;
-  thinTriangles: number;
-  potentialDuplicatePositions: number;
-  duplicateTriangles: number;
-  minTriangleArea: number;
-  maxTriangleArea: number;
-  avgTriangleArea: number;
-  denseTrianglesCount: number;
-  triangleCount: number;
-  vertexCount: number;
-  sampleFocusPoints?: Array<[number, number, number]>;
-  localization?: Partial<Record<TopologyLocalizationKind, TopologyLocalizationSample>>;
-  localizationSamples?: Partial<Record<TopologyLocalizationKind, TopologyLocalizationSample[]>>;
-}
-
-export type HealOperationKind =
-  | 'remove-degenerate-triangles'
-  | 'remove-unreferenced-vertices'
-  | 'recalculate-normals'
-  | 'merge-exact-duplicate-vertices'
-  | 'normalize-skin-weights'
-  | 'remove-exact-duplicate-triangles'
-  | 'consolidate-duplicate-skin-influences';
-
-export interface HealPreview {
-  reasonKey?: string;
-  operationId: string;
-  operation: HealOperationKind;
-  issueId: string;
-  meshUuid: string;
-  meshName: string;
-  status: 'READY' | 'BLOCKED';
-  risk: 'CONDITIONAL';
-  reason?: string;
-  trianglesBefore: number;
-  trianglesAfter: number;
-  affectedTriangles: number;
-  affectedCount: number;
-  metric:
-    | 'triangles'
-    | 'vertices'
-    | 'normals'
-    | 'duplicates'
-    | 'duplicate-triangles'
-    | 'weights'
-    | 'skin-influences';
-  metricBefore: number;
-  metricAfter: number;
-  verticesBefore?: number;
-  verticesAfter?: number;
-  affectedVertices?: number;
-  boundaryEdgesBefore: number;
-  boundaryEdgesAfter: number;
-  nonManifoldEdgesBefore: number;
-  nonManifoldEdgesAfter: number;
-}
-
-export interface HealApplyResult {
-  success: boolean;
-  reasonKey?: string;
-  report?: HealOperationReport;
-  operation?: HealOperationKind;
-  meshUuid?: string;
-  meshName?: string;
-  affectedTriangles?: number;
-  affectedCount?: number;
-  affectedVertices?: number;
-  trianglesBefore?: number;
-  trianglesAfter?: number;
-  reason?: string;
-}
-
-export type HealVerificationStatus = 'VERIFIED' | 'PARTIAL' | 'REGRESSION';
-export type HealMetrics = Pick<TopologyStats,
-  'triangleCount' | 'vertexCount' | 'degenerateTriangles' | 'boundaryEdges' |
-  'nonManifoldEdges' | 'isolatedVertices' | 'componentsCount' | 'thinTriangles' |
-  'tinyComponentsCount' | 'potentialDuplicatePositions' | 'duplicateTriangles'> & {
-    normalCount?: number;
-    invalidNormals?: number;
-    missingNormals?: number;
-    invalidSkinWeights?: number;
-    zeroWeightVertices?: number;
-    redundantSkinInfluenceVertices?: number;
-    /** Deterministic fingerprint used to prove repairs did not retarget skin indices. */
-    skinIndexSignature?: string;
-  };
-
-/** Serializable audit evidence, never a persisted undo buffer or proof about a newly loaded asset. */
-export interface HealOperationReport {
-  version: 2;
-  operationId: string;
-  operation: HealOperationKind;
-  assetName: string;
-  meshUuid: string;
-  meshName: string;
-  appliedAt: string;
-  undoneAt?: string;
-  status: HealVerificationStatus;
-  targetStatus: HealVerificationStatus;
-  pipeline: 'pending' | 'complete' | 'failed';
-  expectedRemoved: number;
-  before: HealMetrics;
-  after: HealMetrics | null;
-  reasons: string[];
-}
-
-export type RepairQueueStatus =
-  | 'idle'
-  | 'running'
-  | 'completed'
-  | 'stopped'
-  | 'blocked'
-  | 'partial'
-  | 'regression'
-  | 'failed';
-
-export interface RepairQueueRunState {
-  status: RepairQueueStatus;
-  completed: number;
-  skipped: number;
-  remaining: number;
-  currentOperation?: HealOperationKind;
-  currentMeshName?: string;
-  stopReason?: string;
-}
-
-export interface HealUndoState {
-  available: boolean;
-  operation?: HealOperationKind;
-  meshName?: string;
-  affectedTriangles?: number;
-  affectedCount?: number;
-  affectedVertices?: number;
-}
-
-export type ExportVerificationStatus = 'VERIFIED' | 'PARTIAL' | 'REGRESSION' | 'FAILED';
-
-export interface ExportVerificationReport {
-  version: 1;
-  createdAt: string;
-  assetName: string;
-  exportedName: string;
-  healOperationId: string;
-  status: ExportVerificationStatus;
-  reasons: string[];
-  byteLength: number;
-  repairCount: number;
-  repairedMeshCount: number;
-  triangleCountExpected: number;
-  triangleCountActual: number;
-  targetTrianglesExpected: number;
-  targetTrianglesActual: number;
-  targetDegeneratesExpected: number;
-  targetDegeneratesActual: number;
-  targetVerticesExpected: number;
-  targetVerticesActual: number;
-  targetUnreferencedExpected: number;
-  targetUnreferencedActual: number;
-  targetInvalidNormalsExpected: number;
-  targetInvalidNormalsActual: number;
-  targetDuplicatePositionsExpected: number;
-  targetDuplicatePositionsActual: number;
-  targetDuplicateTrianglesExpected: number;
-  targetDuplicateTrianglesActual: number;
-  targetInvalidSkinWeightsExpected: number;
-  targetInvalidSkinWeightsActual: number;
-  targetRedundantSkinInfluencesExpected: number;
-  targetRedundantSkinInfluencesActual: number;
-  meshCountExpected: number;
-  meshCountActual: number;
-  materialCountExpected: number;
-  materialCountActual: number;
-  textureCountExpected: number;
-  textureCountActual: number;
-  skinnedMeshCountExpected: number;
-  skinnedMeshCountActual: number;
-  boneCountExpected: number;
-  boneCountActual: number;
-  clipCountExpected: number;
-  clipCountActual: number;
-}
-
-export type RenderMode =
-  | 'pbr'
-  | 'unlit'
-  | 'wireframe'
-  | 'wireframe-overlay'
-  | 'base-color'
-  | 'normals'
-  | 'roughness'
-  | 'metallic'
-  | 'ao'
-  | 'emissive'
-  | 'uv-checker'
-  | 'topology-health'
-  | 'triangle-density';
-
-export type LightingPreset =
-  | 'neutral-studio'
-  | 'soft-studio'
-  | 'hard-studio'
-  | 'outdoor'
-  | 'sunset'
-  | 'top-light'
-  | 'rim-light'
-  | 'dark-studio';
-
-export interface LightingConfig {
-  preset: LightingPreset;
-  exposure: number;
-  environmentIntensity?: number;
-  ambientIntensity?: number;
-  keyIntensity: number;
-  fillIntensity: number;
-  rimIntensity: number;
 }
