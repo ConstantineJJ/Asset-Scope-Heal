@@ -334,6 +334,8 @@ export type HealMetrics = Pick<TopologyStats,
     invalidSkinWeights?: number;
     zeroWeightVertices?: number;
     redundantSkinInfluenceVertices?: number;
+    /** Deterministic fingerprint used to prove repairs did not retarget skin indices. */
+    skinIndexSignature?: string;
   };
 
 /** Serializable audit evidence, never a persisted undo buffer or proof about a newly loaded asset. */
