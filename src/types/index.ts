@@ -399,8 +399,12 @@ export interface ExportVerificationReport {
   targetInvalidNormalsActual: number;
   targetDuplicatePositionsExpected: number;
   targetDuplicatePositionsActual: number;
+  targetDuplicateTrianglesExpected: number;
+  targetDuplicateTrianglesActual: number;
   targetInvalidSkinWeightsExpected: number;
   targetInvalidSkinWeightsActual: number;
+  targetRedundantSkinInfluencesExpected: number;
+  targetRedundantSkinInfluencesActual: number;
   meshCountExpected: number;
   meshCountActual: number;
   materialCountExpected: number;
