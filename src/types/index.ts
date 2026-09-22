@@ -68,7 +68,12 @@ export interface HealthIssue {
 
   meshName?: string;
   meshUuid?: string;
+  nodeName?: string;
+  boneName?: string;
+  clipName?: string;
   count?: number;
+  /** Human-readable numerator / denominator context when a reliable denominator exists. */
+  ratio?: string;
   affectedIndices?: number[];
   affectedElement?: 'triangle' | 'edge' | 'vertex' | 'component';
   focusPosition?: [number, number, number];
@@ -284,7 +289,14 @@ export interface HealPreview {
   trianglesAfter: number;
   affectedTriangles: number;
   affectedCount: number;
-  metric: 'triangles' | 'vertices' | 'normals' | 'duplicates' | 'weights' | 'skin-influences';
+  metric:
+    | 'triangles'
+    | 'vertices'
+    | 'normals'
+    | 'duplicates'
+    | 'duplicate-triangles'
+    | 'weights'
+    | 'skin-influences';
   metricBefore: number;
   metricAfter: number;
   verticesBefore?: number;
