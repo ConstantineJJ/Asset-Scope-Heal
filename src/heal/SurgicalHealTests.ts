@@ -1726,7 +1726,7 @@ export async function runSurgicalHealIntegrationTests(): Promise<SurgicalHealTes
         description: 'Several repairs on one/multiple meshes must survive verified GLB serialization and fresh post-import measurements.',
         expected: 'VERIFIED; 4 repairs on 3 meshes; reopened targets remain repaired',
         actual:
-          `${exported.report.status}; repairs=${exported.report.repairCount}; meshes=${exported.report.repairedMeshCount}; ` +
+          `${exported.report.status}; reasons=${exported.report.reasons.join(',') || 'none'}; repairs=${exported.report.repairCount}; meshes=${exported.report.repairedMeshCount}; ` +
           `deg=${topologyStats?.degenerateTriangles ?? -1}; loose=${topologyStats?.isolatedVertices ?? -1}; ` +
           `normals=${normalStats?.invalidCount ?? -1}; weights=${skinStats?.invalidSumCount ?? -1}`,
         passed:
