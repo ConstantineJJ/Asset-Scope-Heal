@@ -109,6 +109,8 @@ export const en = {
       normalCount: 'Normal count no longer matches the vertex domain.',
       zeroWeightVertices: 'Zero-weight vertex count changed unexpectedly.',
       invalidSkinWeights: 'Invalid skin-weight count increased.',
+      redundantSkinInfluenceVertices: 'Redundant skin-influence count changed unexpectedly.',
+      skinIndexSignature: 'Skin bone indices changed unexpectedly.',
     },
     errors: {
       invalidGeometry: 'Invalid indices or non-finite positions. Repair is blocked.',
