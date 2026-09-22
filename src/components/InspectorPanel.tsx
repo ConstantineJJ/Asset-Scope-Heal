@@ -119,19 +119,29 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   const [severityFilter, setSeverityFilter] = useState<HealthSeverity | 'ALL'>('ALL');
   const [locationIndexByIssue, setLocationIndexByIssue] = useState<Record<string, number>>({});
 
-  const filteredIssues = healthIssues.filter((issue) => {
+  // Technical Health deliberately excludes target/profile Fitness judgments.
+  // A heavy but structurally valid model must not look "sick" merely because it is expensive.
+  const technicalHealthIssues = healthIssues.filter((issue) => issue.layer !== 'Fitness');
+  const fitnessIssues = healthIssues.filter((issue) => issue.layer === 'Fitness');
+
+  const filteredIssues = technicalHealthIssues.filter((issue) => {
     if (severityFilter !== 'ALL' && issue.severity !== severityFilter) return false;
     return true;
   });
 
   const severityCounts = {
-    ERROR: healthIssues.filter((i) => i.severity === 'ERROR').length,
-    WARNING: healthIssues.filter((i) => i.severity === 'WARNING').length,
-    INFO: healthIssues.filter((i) => i.severity === 'INFO').length,
-    OK: healthIssues.filter((i) => i.severity === 'OK').length,
-    NA: healthIssues.filter((i) => i.severity === 'N/A').length,
-    UNKNOWN: healthIssues.filter((i) => i.severity === 'UNKNOWN').length,
+    ERROR: technicalHealthIssues.filter((i) => i.severity === 'ERROR').length,
+    WARNING: technicalHealthIssues.filter((i) => i.severity === 'WARNING').length,
+    INFO: technicalHealthIssues.filter((i) => i.severity === 'INFO').length,
+    OK: technicalHealthIssues.filter((i) => i.severity === 'OK').length,
+    NA: technicalHealthIssues.filter((i) => i.severity === 'N/A').length,
+    UNKNOWN: technicalHealthIssues.filter((i) => i.severity === 'UNKNOWN').length,
   };
+
+  const runtimeTextureMemory = textures.reduce(
+    (total, texture) => total + (texture.uncompressedBytesEstimate || 0),
+    0
+  );
 
   const formatBytes = (bytes?: number) => {
     if (!bytes || bytes === 0) return '0 B';
@@ -1065,26 +1075,88 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       {/* TAB 5: PERFORMANCE & LIGHTING */}
       {activeTab === 'performance' && summary && (
         <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
-          {/* Runtime Characteristics */}
+          {/* Runtime Cost — measurements live here, not in technical Health. */}
           <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-2">
-            <h4 className="font-semibold text-gray-200 uppercase tracking-wider text-[10px] text-cyan-400">
-              Runtime Footprint
-            </h4>
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="font-semibold text-gray-200 uppercase tracking-wider text-[10px] text-cyan-400">
+                Runtime Cost
+              </h4>
+              <span className="text-[9px] text-gray-500 font-mono">MEASUREMENTS</span>
+            </div>
             <div className="grid grid-cols-2 gap-2 text-[11px]">
               <div>
-                <span className="text-gray-400 block text-[10px]">Estimated Draw Calls:</span>
+                <span className="text-gray-400 block text-[10px]">Triangles:</span>
+                <span className="font-mono font-bold text-gray-100">
+                  {summary.triangleCount.toLocaleString()}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-400 block text-[10px]">Est. Draw Calls:</span>
                 <span className="font-mono font-bold text-gray-100">
                   ~{summary.primitiveCount || summary.meshCount}
                 </span>
               </div>
               <div>
-                <span className="text-gray-400 block text-[10px]">Total Triangles:</span>
-                <span className="font-mono font-bold text-gray-100">
-                  {summary.triangleCount.toLocaleString()}
-                </span>
+                <span className="text-gray-400 block text-[10px]">Materials:</span>
+                <span className="font-mono text-gray-200">{summary.materialCount.toLocaleString()}</span>
+              </div>
+              <div>
+                <span className="text-gray-400 block text-[10px]">Texture Memory:</span>
+                <span className="font-mono text-gray-200">{formatBytes(runtimeTextureMemory)}</span>
+              </div>
+              <div>
+                <span className="text-gray-400 block text-[10px]">Bones:</span>
+                <span className="font-mono text-gray-200">{summary.boneCount.toLocaleString()}</span>
+              </div>
+              <div>
+                <span className="text-gray-400 block text-[10px]">Skinned Meshes:</span>
+                <span className="font-mono text-gray-200">{summary.skinnedMeshCount.toLocaleString()}</span>
               </div>
             </div>
+            <p className="text-[10px] leading-relaxed text-gray-500 border-t border-[#272b33] pt-2">
+              These are runtime-cost measurements, not defects. Diagnostic Profiles may reinterpret the same values as target-fit warnings without changing the measurements.
+            </p>
           </div>
+
+          {fitnessIssues.length > 0 && (
+            <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="font-semibold text-gray-200 uppercase tracking-wider text-[10px] text-cyan-400">
+                  Profile Fit
+                </h4>
+                <span className="text-[9px] text-gray-500 font-mono">{fitnessIssues.length} RULE(S)</span>
+              </div>
+              <p className="text-[10px] leading-relaxed text-gray-500">
+                Profile-dependent interpretation is kept separate from structural Health.
+              </p>
+              <div className="space-y-1.5">
+                {fitnessIssues.map((issue) => (
+                  <div
+                    key={issue.id}
+                    className="rounded border border-[#2c3039] bg-[#17191e] p-2 space-y-1"
+                  >
+                    <div className="flex items-start gap-2">
+                      {getSeverityIcon(issue.severity)}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`px-1.5 py-0.2 text-[9px] font-bold rounded border uppercase font-mono ${getSeverityBadgeClass(
+                              issue.severity
+                            )}`}
+                          >
+                            {issue.severity}
+                          </span>
+                          <span className="text-[9px] text-gray-500 font-mono uppercase">FITNESS</span>
+                        </div>
+                        <div className="mt-0.5 text-[11px] font-medium text-gray-200">{issue.title}</div>
+                      </div>
+                    </div>
+                    <p className="pl-6 text-[10px] leading-relaxed text-gray-400">{issue.description}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Lighting Fine Tuning */}
           <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-2.5">
