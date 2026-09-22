@@ -79,6 +79,7 @@ function verifyDegenerateRemoval(
     'thinTriangles',
     'tinyComponentsCount',
     'potentialDuplicatePositions',
+    'duplicateTriangles',
   ] as const) {
     if (measured[key] > before[key]) reasons.push(key);
   }
@@ -119,6 +120,7 @@ function verifyUnreferencedVertexRemoval(
     'componentsCount',
     'thinTriangles',
     'tinyComponentsCount',
+    'duplicateTriangles',
   ] as const) {
     if (measured[key] !== before[key]) reasons.push(key);
   }
@@ -212,6 +214,7 @@ function verifyExactDuplicateMerge(
     'thinTriangles',
     'tinyComponentsCount',
     'potentialDuplicatePositions',
+    'duplicateTriangles',
   ] as const) {
     if (measured[key] > before[key]) reasons.push(key);
   }
