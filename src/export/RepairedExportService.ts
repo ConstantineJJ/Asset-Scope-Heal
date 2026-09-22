@@ -12,6 +12,7 @@ import type {
 import { copyGeometryData } from '../heal/GeometryRemap';
 import { measureGeometryNormals } from '../analysis/NormalsMeasure';
 import { measureSkinWeights } from '../analysis/SkinWeightMeasure';
+import { estimateObjectGeometryBytes, nowMs } from '../performance/PerformanceProfiler';
 
 export type ExportSampleId = 'test-patient';
 
@@ -27,10 +28,19 @@ export interface RepairedExportRequest {
   healReports: HealOperationReport[];
 }
 
+export interface RepairedExportPerformance {
+  exportMs: number;
+  reopenVerificationMs: number;
+  totalMs: number;
+  pristineGeometryBytes: number;
+  reopenedGeometryBytes: number;
+}
+
 export interface RepairedExportResult {
   fileName: string;
   buffer: ArrayBuffer;
   report: ExportVerificationReport;
+  performance: RepairedExportPerformance;
 }
 
 interface FreshAsset {
@@ -40,6 +50,7 @@ interface FreshAsset {
 
 export class RepairedExportService {
   public async exportAndVerify(request: RepairedExportRequest): Promise<RepairedExportResult> {
+    const totalStart = nowMs();
     const { currentRoot, healReports, assetName } = request;
     if (healReports.length === 0) {
       throw new Error('export.errors.healNotVerified');
@@ -97,7 +108,11 @@ export class RepairedExportService {
     const currentTarget = currentMeshes[targetOrdinal];
     const currentTargetNormals = measureGeometryNormals(currentTarget.geometry);
     const fresh = await this.createFreshAsset(request.source);
+    const pristineGeometryBytes = estimateObjectGeometryBytes(fresh.root);
     let reopened: FreshAsset | null = null;
+    let reopenedGeometryBytes = 0;
+    let exportMs = 0;
+    let reopenVerificationMs = 0;
 
     try {
       const freshMeshes = this.collectMeshes(fresh.root);
@@ -129,21 +144,26 @@ export class RepairedExportService {
       const exportedName = this.makeExportName(assetName);
 
       const exporter = new GLTFExporter();
+      const exportStart = nowMs();
       const output = await exporter.parseAsync(fresh.root, {
         binary: true,
         onlyVisible: false,
         animations: fresh.animations,
       });
+      exportMs = nowMs() - exportStart;
       if (!(output instanceof ArrayBuffer)) {
         throw new Error('export.errors.binaryExportFailed');
       }
 
       // Re-open with a separate loader. The source used to create the GLB is not
       // trusted as proof that the serialized file can be loaded again.
+      const reopenStart = nowMs();
       const verificationLoader = new GLBLoaderService();
       try {
+        // GLTFLoader does not mutate the GLB bytes. Avoid a second full-size copy
+        // of the freshly exported buffer during verification.
         const loaded = await verificationLoader.loadFromArrayBuffer(
-          output.slice(0),
+          output,
           exportedName,
           output.byteLength
         );
@@ -152,6 +172,7 @@ export class RepairedExportService {
         verificationLoader.dispose();
       }
 
+      reopenedGeometryBytes = estimateObjectGeometryBytes(reopened.root);
       const reopenedMeshes = this.collectMeshes(reopened.root);
       const actualSummary = analyzeGeometry(reopened.root, exportedName, output.byteLength);
       const targetMesh = reopenedMeshes[targetOrdinal];
@@ -292,8 +313,21 @@ export class RepairedExportService {
         clipCountActual: reopened.animations.length,
       };
 
-      return { fileName: exportedName, buffer: output, report };
+      reopenVerificationMs = nowMs() - reopenStart;
+      return {
+        fileName: exportedName,
+        buffer: output,
+        report,
+        performance: {
+          exportMs,
+          reopenVerificationMs,
+          totalMs: nowMs() - totalStart,
+          pristineGeometryBytes,
+          reopenedGeometryBytes,
+        },
+      };
     } finally {
+      // Verification graphs are temporary. Dispose them even when a check throws.
       this.disposeObject(fresh.root);
       if (reopened) this.disposeObject(reopened.root);
     }
@@ -320,8 +354,10 @@ export class RepairedExportService {
 
     const loader = new GLBLoaderService();
     try {
+      // GLTFLoader.parse is read-only with respect to the source bytes. Reusing
+      // the pristine source avoids another full-size ArrayBuffer allocation.
       const loaded = await loader.loadFromArrayBuffer(
-        source.buffer.slice(0),
+        source.buffer,
         source.fileName,
         source.buffer.byteLength
       );
