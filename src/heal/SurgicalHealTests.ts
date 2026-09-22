@@ -679,7 +679,7 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
     } as HealthIssue;
 
     return getRepairOperationForIssue(issue) === null &&
-      listRepairOperations().length === 5;
+      listRepairOperations().length === 7;
   });
 
   test('Remove Unreferenced Vertices compacts every supported vertex-domain attribute and Undo restores the original geometry', () => {
