@@ -10,7 +10,11 @@ import {
   planRemoveUnreferencedVertices,
 } from './GeometryRemap';
 import { planRecalculateNormals } from './NormalsRepair';
-import { planNormalizeSkinWeights } from './SkinWeightRepair';
+import {
+  planNormalizeSkinWeights,
+  planConsolidateDuplicateSkinInfluences,
+} from './SkinWeightRepair';
+import { planRemoveExactDuplicateTriangles } from './DuplicateTriangleRepair';
 
 type SupportedIndexArray = Uint8Array | Uint16Array | Uint32Array;
 
@@ -738,6 +742,171 @@ export class SurgicalHealEngine {
     return preview;
   }
 
+  public previewRemoveExactDuplicateTriangles(
+    root: THREE.Object3D,
+    meshUuid: string
+  ): HealPreview {
+    this.disposePending();
+
+    const obj = root.getObjectByProperty('uuid', meshUuid);
+    if (!obj || !(obj as THREE.Mesh).isMesh || (obj as THREE.InstancedMesh).isInstancedMesh) {
+      return this.blockedDuplicateTriangles(meshUuid, 'Unknown mesh', 'heal.errors.targetMissing');
+    }
+
+    const mesh = obj as THREE.Mesh;
+    const geometry = mesh.geometry;
+
+    let sharedUsers = 0;
+    root.traverse((candidate) => {
+      if ((candidate as THREE.Mesh).isMesh && (candidate as THREE.Mesh).geometry === geometry) {
+        sharedUsers++;
+      }
+    });
+    if (sharedUsers !== 1) {
+      return this.blockedDuplicateTriangles(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        'heal.errors.sharedGeometry'
+      );
+    }
+
+    const planned = planRemoveExactDuplicateTriangles(mesh);
+    if ('reasonKey' in planned) {
+      return this.blockedDuplicateTriangles(
+        mesh.uuid,
+        mesh.name || `Mesh_${mesh.id}`,
+        planned.reasonKey
+      );
+    }
+
+    const preview: HealPreview = {
+      operationId: THREE.MathUtils.generateUUID(),
+      operation: 'remove-exact-duplicate-triangles',
+      issueId: 'topo-exact-duplicate-triangles',
+      meshUuid: mesh.uuid,
+      meshName: mesh.name || `Mesh_${mesh.id}`,
+      status: 'READY',
+      risk: 'CONDITIONAL',
+      trianglesBefore: planned.before.triangleCount,
+      trianglesAfter: planned.after.triangleCount,
+      affectedTriangles: planned.duplicateCount,
+      affectedCount: planned.duplicateCount,
+      metric: 'triangles',
+      metricBefore: planned.before.duplicateTriangles,
+      metricAfter: planned.after.duplicateTriangles,
+      verticesBefore: planned.before.vertexCount,
+      verticesAfter: planned.after.vertexCount,
+      affectedVertices: 0,
+      boundaryEdgesBefore: planned.before.boundaryEdges,
+      boundaryEdgesAfter: planned.after.boundaryEdges,
+      nonManifoldEdgesBefore: planned.before.nonManifoldEdges,
+      nonManifoldEdgesAfter: planned.after.nonManifoldEdges,
+    };
+
+    this.pending = {
+      mutation: 'index-only',
+      preview,
+      geometryUuid: geometry.uuid,
+      replacementIndex: planned.replacementIndex,
+      snapshot: captureGeometry(geometry),
+    };
+
+    return preview;
+  }
+
+  public previewConsolidateDuplicateSkinInfluences(
+    root: THREE.Object3D,
+    meshUuid: string
+  ): HealPreview {
+    this.disposePending();
+
+    const obj = root.getObjectByProperty('uuid', meshUuid);
+    if (
+      !obj ||
+      !(obj as THREE.Mesh).isMesh ||
+      !(obj as THREE.SkinnedMesh).isSkinnedMesh ||
+      (obj as THREE.InstancedMesh).isInstancedMesh
+    ) {
+      return this.blockedSkinInfluences(
+        meshUuid,
+        'Unknown mesh',
+        'heal.errors.skinWeightsNeedsSkinnedMesh'
+      );
+    }
+
+    const mesh = obj as THREE.SkinnedMesh;
+    const geometry = mesh.geometry;
+
+    let sharedUsers = 0;
+    root.traverse((candidate) => {
+      if ((candidate as THREE.Mesh).isMesh && (candidate as THREE.Mesh).geometry === geometry) {
+        sharedUsers++;
+      }
+    });
+    if (sharedUsers !== 1) {
+      return this.blockedSkinInfluences(
+        mesh.uuid,
+        mesh.name || `SkinnedMesh_${mesh.id}`,
+        'heal.errors.sharedGeometry'
+      );
+    }
+
+    const planned = planConsolidateDuplicateSkinInfluences(mesh);
+    if ('reasonKey' in planned) {
+      return this.blockedSkinInfluences(
+        mesh.uuid,
+        mesh.name || `SkinnedMesh_${mesh.id}`,
+        planned.reasonKey
+      );
+    }
+
+    let before;
+    try {
+      before = analyzeMeshTopology(meshTopologyData(mesh));
+    } catch {
+      planned.replacement.dispose();
+      return this.blockedSkinInfluences(
+        mesh.uuid,
+        mesh.name || `SkinnedMesh_${mesh.id}`,
+        'heal.errors.beforeUnavailable'
+      );
+    }
+
+    const preview: HealPreview = {
+      operationId: THREE.MathUtils.generateUUID(),
+      operation: 'consolidate-duplicate-skin-influences',
+      issueId: 'skin-redundant-influences',
+      meshUuid: mesh.uuid,
+      meshName: mesh.name || `SkinnedMesh_${mesh.id}`,
+      status: 'READY',
+      risk: 'CONDITIONAL',
+      trianglesBefore: before.triangleCount,
+      trianglesAfter: before.triangleCount,
+      affectedTriangles: 0,
+      affectedCount: planned.redundantBefore,
+      metric: 'skin-influences',
+      metricBefore: planned.redundantBefore,
+      metricAfter: planned.redundantAfter,
+      verticesBefore: before.vertexCount,
+      verticesAfter: before.vertexCount,
+      affectedVertices: planned.redundantBefore,
+      boundaryEdgesBefore: before.boundaryEdges,
+      boundaryEdgesAfter: before.boundaryEdges,
+      nonManifoldEdgesBefore: before.nonManifoldEdges,
+      nonManifoldEdgesAfter: before.nonManifoldEdges,
+    };
+
+    this.pending = {
+      mutation: 'geometry',
+      preview,
+      geometryUuid: geometry.uuid,
+      replacementGeometry: planned.replacement,
+      snapshot: captureGeometry(geometry),
+    };
+
+    return preview;
+  }
+
   public applyPending(root: THREE.Object3D, assetName = ''): HealApplyResult {
     const pending = this.pending;
     if (!pending) {
@@ -1053,6 +1222,72 @@ export class SurgicalHealEngine {
       affectedTriangles: 0,
       affectedCount: 0,
       metric: 'duplicates',
+      metricBefore: 0,
+      metricAfter: 0,
+      verticesBefore: 0,
+      verticesAfter: 0,
+      affectedVertices: 0,
+      boundaryEdgesBefore: 0,
+      boundaryEdgesAfter: 0,
+      nonManifoldEdgesBefore: 0,
+      nonManifoldEdgesAfter: 0,
+    };
+  }
+
+  private blockedDuplicateTriangles(
+    meshUuid: string,
+    meshName: string,
+    reasonKeyOrReason: string
+  ): HealPreview {
+    const isKey = reasonKeyOrReason.startsWith('heal.');
+    return {
+      operationId: `heal_blocked_duplicate_triangles_${meshUuid}`,
+      operation: 'remove-exact-duplicate-triangles',
+      issueId: 'topo-exact-duplicate-triangles',
+      meshUuid,
+      meshName,
+      status: 'BLOCKED',
+      risk: 'CONDITIONAL',
+      reasonKey: isKey ? reasonKeyOrReason : undefined,
+      reason: isKey ? undefined : reasonKeyOrReason,
+      trianglesBefore: 0,
+      trianglesAfter: 0,
+      affectedTriangles: 0,
+      affectedCount: 0,
+      metric: 'triangles',
+      metricBefore: 0,
+      metricAfter: 0,
+      verticesBefore: 0,
+      verticesAfter: 0,
+      affectedVertices: 0,
+      boundaryEdgesBefore: 0,
+      boundaryEdgesAfter: 0,
+      nonManifoldEdgesBefore: 0,
+      nonManifoldEdgesAfter: 0,
+    };
+  }
+
+  private blockedSkinInfluences(
+    meshUuid: string,
+    meshName: string,
+    reasonKeyOrReason: string
+  ): HealPreview {
+    const isKey = reasonKeyOrReason.startsWith('heal.');
+    return {
+      operationId: `heal_blocked_skin_influences_${meshUuid}`,
+      operation: 'consolidate-duplicate-skin-influences',
+      issueId: 'skin-redundant-influences',
+      meshUuid,
+      meshName,
+      status: 'BLOCKED',
+      risk: 'CONDITIONAL',
+      reasonKey: isKey ? reasonKeyOrReason : undefined,
+      reason: isKey ? undefined : reasonKeyOrReason,
+      trianglesBefore: 0,
+      trianglesAfter: 0,
+      affectedTriangles: 0,
+      affectedCount: 0,
+      metric: 'skin-influences',
       metricBefore: 0,
       metricAfter: 0,
       verticesBefore: 0,

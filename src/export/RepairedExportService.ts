@@ -81,10 +81,14 @@ export class RepairedExportService {
         stats.degenerateTriangles !== report.after.degenerateTriangles ||
         stats.isolatedVertices !== report.after.isolatedVertices ||
         stats.potentialDuplicatePositions !== report.after.potentialDuplicatePositions ||
+        stats.duplicateTriangles !== report.after.duplicateTriangles ||
         (report.after.invalidNormals !== undefined &&
           normals.invalidCount !== report.after.invalidNormals) ||
         (report.after.invalidSkinWeights !== undefined &&
-          (!skin.supported || skin.invalidSumCount !== report.after.invalidSkinWeights))
+          (!skin.supported || skin.invalidSumCount !== report.after.invalidSkinWeights)) ||
+        (report.after.redundantSkinInfluenceVertices !== undefined &&
+          (!skin.supported ||
+            skin.redundantInfluenceVertexCount !== report.after.redundantSkinInfluenceVertices))
       ) {
         throw new Error('export.errors.geometryChanged');
       }
@@ -186,7 +190,9 @@ export class RepairedExportService {
       let targetUnreferencedActual = -1;
       let targetInvalidNormalsActual = -1;
       let targetDuplicatePositionsActual = -1;
+      let targetDuplicateTrianglesActual = -1;
       let targetInvalidSkinWeightsActual = 0;
+      let targetRedundantSkinInfluencesActual = 0;
       if (targetMesh) {
         const targetStats = analyzeMeshTopology(meshTopologyData(targetMesh));
         const targetNormals = measureGeometryNormals(targetMesh.geometry);
@@ -196,8 +202,12 @@ export class RepairedExportService {
         targetUnreferencedActual = targetStats.isolatedVertices;
         targetInvalidNormalsActual = targetNormals.invalidCount;
         targetDuplicatePositionsActual = targetStats.potentialDuplicatePositions;
+        targetDuplicateTrianglesActual = targetStats.duplicateTriangles;
         const targetSkin = measureSkinWeights(targetMesh);
         targetInvalidSkinWeightsActual = targetSkin.supported ? targetSkin.invalidSumCount : 0;
+        targetRedundantSkinInfluencesActual = targetSkin.supported
+          ? targetSkin.redundantInfluenceVertexCount
+          : 0;
       }
 
       if (actualSummary.triangleCount !== currentSummary.triangleCount) reasons.push('triangleCount');
@@ -212,11 +222,20 @@ export class RepairedExportService {
       if (targetDuplicatePositionsActual !== latestReport.after!.potentialDuplicatePositions) {
         reasons.push('targetDuplicatePositions');
       }
+      if (targetDuplicateTrianglesActual !== latestReport.after!.duplicateTriangles) {
+        reasons.push('targetDuplicateTriangles');
+      }
       if (
         latestReport.after!.invalidSkinWeights !== undefined &&
         targetInvalidSkinWeightsActual !== latestReport.after!.invalidSkinWeights
       ) {
         reasons.push('targetInvalidSkinWeights');
+      }
+      if (
+        latestReport.after!.redundantSkinInfluenceVertices !== undefined &&
+        targetRedundantSkinInfluencesActual !== latestReport.after!.redundantSkinInfluenceVertices
+      ) {
+        reasons.push('targetRedundantSkinInfluences');
       }
       if (actualSummary.meshCount !== pristineSummary.meshCount) reasons.push('meshCount');
       if (actualSummary.materialCount !== pristineSummary.materialCount) reasons.push('materialCount');
@@ -250,8 +269,13 @@ export class RepairedExportService {
         targetInvalidNormalsActual,
         targetDuplicatePositionsExpected: latestReport.after!.potentialDuplicatePositions,
         targetDuplicatePositionsActual,
+        targetDuplicateTrianglesExpected: latestReport.after!.duplicateTriangles,
+        targetDuplicateTrianglesActual,
         targetInvalidSkinWeightsExpected: latestReport.after!.invalidSkinWeights ?? 0,
         targetInvalidSkinWeightsActual,
+        targetRedundantSkinInfluencesExpected:
+          latestReport.after!.redundantSkinInfluenceVertices ?? 0,
+        targetRedundantSkinInfluencesActual,
         meshCountExpected: pristineSummary.meshCount,
         meshCountActual: actualSummary.meshCount,
         materialCountExpected: pristineSummary.materialCount,
@@ -433,11 +457,15 @@ export class RepairedExportService {
       thinTriangles: stats.thinTriangles,
       tinyComponentsCount: stats.tinyComponentsCount,
       potentialDuplicatePositions: stats.potentialDuplicatePositions,
+      duplicateTriangles: stats.duplicateTriangles,
       normalCount: normals.normalCount,
       invalidNormals: normals.invalidCount,
       missingNormals: normals.missing,
       invalidSkinWeights: skin.supported ? skin.invalidSumCount : null,
       zeroWeightVertices: skin.supported ? skin.zeroWeightCount : null,
+      redundantSkinInfluenceVertices: skin.supported
+        ? skin.redundantInfluenceVertexCount
+        : null,
       attributes,
       morphAttributes,
     });

@@ -28,6 +28,7 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
   const degenerateIndices: number[] = [];
   let degenerateCount = 0;
   let thinTriangleCount = 0;
+  let duplicateTriangles = 0;
 
   let minArea = Infinity;
   let maxArea = 0;
@@ -78,6 +79,21 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
   // Map undirected edge -> count of sharing triangles
   // We can use a Map with string key "min_max" for indices
   const edgeTriangleCount = new Map<string, { count: number; u: number; v: number }>();
+
+  // Exact duplicate faces are only meaningful in indexed geometry. Preserve
+  // winding: cyclic rotations are equivalent, reversed order is not.
+  const exactTriangleFirst = new Map<string, number>();
+  const orientedTriangleKey = (a: number, b: number, c: number) => {
+    const rotations = [
+      [a, b, c],
+      [b, c, a],
+      [c, a, b],
+    ];
+    rotations.sort((left, right) =>
+      left[0] - right[0] || left[1] - right[1] || left[2] - right[2]
+    );
+    return rotations[0].join('_');
+  };
 
   // Track referenced vertices to detect isolated vertices
   const referencedVertices = new Uint8Array(vertexCount);
@@ -132,6 +148,18 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
     if (i0 < vertexCount) referencedVertices[i0] = 1;
     if (i1 < vertexCount) referencedVertices[i1] = 1;
     if (i2 < vertexCount) referencedVertices[i2] = 1;
+
+    let duplicateOf: number | null = null;
+    if (indices) {
+      const key = orientedTriangleKey(i0, i1, i2);
+      const first = exactTriangleFirst.get(key);
+      if (first === undefined) {
+        exactTriangleFirst.set(key, t);
+      } else {
+        duplicateTriangles++;
+        duplicateOf = first;
+      }
+    }
 
     // Build edge map
     const edges = [
@@ -226,6 +254,14 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
           element: 'triangle',
         });
       }
+    }
+
+    if (duplicateOf !== null) {
+      addLocalizationSample('duplicateTriangle', {
+        focusPoint: toWorld(centroid(vA, vB, vC)),
+        affectedIndices: [t],
+        element: 'triangle',
+      });
     }
   }
 
@@ -392,6 +428,7 @@ export function analyzeMeshTopology(meshData: RawMeshData): TopologyStats {
     tinyComponentsCount,
     thinTriangles: thinTriangleCount,
     potentialDuplicatePositions,
+    duplicateTriangles,
     minTriangleArea: minArea,
     maxTriangleArea: maxArea,
     avgTriangleArea: avgArea,

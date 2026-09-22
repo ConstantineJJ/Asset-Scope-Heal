@@ -110,9 +110,11 @@ export interface SkinningStats {
   zeroWeightVertices: number;
   invalidWeightSumVertices: number;
   unusedBonesCount: number;
+  redundantInfluenceVertices: number;
   bones: BoneInfo[];
   invalidWeightLocations?: DiagnosticLocation[];
   zeroWeightLocations?: DiagnosticLocation[];
+  redundantInfluenceLocations?: DiagnosticLocation[];
 }
 
 export interface BoundingBoxInfo {
@@ -218,7 +220,8 @@ export type TopologyLocalizationKind =
   | 'isolated'
   | 'tinyComponent'
   | 'thinTriangle'
-  | 'duplicatePosition';
+  | 'duplicatePosition'
+  | 'duplicateTriangle';
 
 export interface TopologyLocalizationSample {
   focusPoint: [number, number, number];
@@ -246,6 +249,7 @@ export interface TopologyStats {
   tinyComponentsCount: number;
   thinTriangles: number;
   potentialDuplicatePositions: number;
+  duplicateTriangles: number;
   minTriangleArea: number;
   maxTriangleArea: number;
   avgTriangleArea: number;
@@ -262,7 +266,9 @@ export type HealOperationKind =
   | 'remove-unreferenced-vertices'
   | 'recalculate-normals'
   | 'merge-exact-duplicate-vertices'
-  | 'normalize-skin-weights';
+  | 'normalize-skin-weights'
+  | 'remove-exact-duplicate-triangles'
+  | 'consolidate-duplicate-skin-influences';
 
 export interface HealPreview {
   reasonKey?: string;
@@ -278,7 +284,7 @@ export interface HealPreview {
   trianglesAfter: number;
   affectedTriangles: number;
   affectedCount: number;
-  metric: 'triangles' | 'vertices' | 'normals' | 'duplicates' | 'weights';
+  metric: 'triangles' | 'vertices' | 'normals' | 'duplicates' | 'weights' | 'skin-influences';
   metricBefore: number;
   metricAfter: number;
   verticesBefore?: number;
@@ -309,12 +315,13 @@ export type HealVerificationStatus = 'VERIFIED' | 'PARTIAL' | 'REGRESSION';
 export type HealMetrics = Pick<TopologyStats,
   'triangleCount' | 'vertexCount' | 'degenerateTriangles' | 'boundaryEdges' |
   'nonManifoldEdges' | 'isolatedVertices' | 'componentsCount' | 'thinTriangles' |
-  'tinyComponentsCount' | 'potentialDuplicatePositions'> & {
+  'tinyComponentsCount' | 'potentialDuplicatePositions' | 'duplicateTriangles'> & {
     normalCount?: number;
     invalidNormals?: number;
     missingNormals?: number;
     invalidSkinWeights?: number;
     zeroWeightVertices?: number;
+    redundantSkinInfluenceVertices?: number;
   };
 
 /** Serializable audit evidence, never a persisted undo buffer or proof about a newly loaded asset. */
@@ -392,8 +399,12 @@ export interface ExportVerificationReport {
   targetInvalidNormalsActual: number;
   targetDuplicatePositionsExpected: number;
   targetDuplicatePositionsActual: number;
+  targetDuplicateTrianglesExpected: number;
+  targetDuplicateTrianglesActual: number;
   targetInvalidSkinWeightsExpected: number;
   targetInvalidSkinWeightsActual: number;
+  targetRedundantSkinInfluencesExpected: number;
+  targetRedundantSkinInfluencesActual: number;
   meshCountExpected: number;
   meshCountActual: number;
   materialCountExpected: number;

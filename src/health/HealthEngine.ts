@@ -57,6 +57,7 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
   const totalTinyComponents = total((s) => s.tinyComponentsCount);
   const totalThinTriangles = total((s) => s.thinTriangles);
   const totalDuplicates = total((s) => s.potentialDuplicatePositions);
+  const totalDuplicateTriangles = total((s) => s.duplicateTriangles);
 
   if (totalDegenerate > 0) {
     issues.push({
@@ -176,6 +177,23 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
     });
   }
 
+  if (totalDuplicateTriangles > 0) {
+    issues.push({
+      id: 'topo-exact-duplicate-triangles',
+      category: 'Topology',
+      severity: 'INFO',
+      layer: 'Health',
+      title: `Exact duplicate triangles: ${totalDuplicateTriangles}`,
+      description: `${totalDuplicateTriangles} indexed triangle(s) repeat an earlier triangle with the same vertex indices and winding. Reversed-winding backfaces are not counted.`,
+      count: totalDuplicateTriangles,
+      repairability: 'CONDITIONAL',
+      evidence: 'Only same-winding cyclic index duplicates are counted.',
+      whyItMatters: 'Exact duplicate faces add redundant rasterization and can create depth or shading ambiguity in some material pipelines.',
+      suggestedAction: 'Preview duplicate-triangle removal. Automatic removal is offered only when material, draw-range, sharing, and topology safety gates pass.',
+      ...localize((s) => s.duplicateTriangles, 'duplicateTriangle'),
+    });
+  }
+
   return issues;
 }
 
@@ -275,6 +293,35 @@ export function evaluateSkinningIssues(
             affectedIndices: first.affectedIndices,
             focusPosition: first.focusPosition,
             locations: stats.invalidWeightLocations,
+          }
+        : {}),
+    });
+  }
+
+  // Duplicate active influences on the same bone can be consolidated without
+  // guessing a new influence. Keep it informational, but offer a guarded repair.
+  if (stats.redundantInfluenceVertices > 0) {
+    const first = stats.redundantInfluenceLocations?.[0];
+    issues.push({
+      id: 'skin-redundant-influences',
+      category: 'Skinning',
+      severity: 'INFO',
+      layer: 'Health',
+      title: `Redundant skin influences: ${stats.redundantInfluenceVertices}`,
+      description: `${stats.redundantInfluenceVertices} vertex/vertices contain the same active bone index in more than one influence slot.`,
+      count: stats.redundantInfluenceVertices,
+      repairability: 'CONDITIONAL',
+      evidence: 'Two or more non-zero influence slots reference the same bone on a vertex.',
+      whyItMatters: 'Duplicate slots waste influence capacity and make skin data harder to inspect without changing the intended weighted transform.',
+      suggestedAction: 'Preview consolidation. Duplicate weights are summed onto one slot; no new bone influence is guessed.',
+      ...(first
+        ? {
+            meshUuid: first.meshUuid,
+            meshName: first.meshName,
+            affectedElement: first.affectedElement,
+            affectedIndices: first.affectedIndices,
+            focusPosition: first.focusPosition,
+            locations: stats.redundantInfluenceLocations,
           }
         : {}),
     });

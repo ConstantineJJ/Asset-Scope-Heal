@@ -15,6 +15,8 @@ const operationPriority: Record<HealOperationKind, number> = {
   'recalculate-normals': 30,
   'normalize-skin-weights': 40,
   'merge-exact-duplicate-vertices': 50,
+  'remove-exact-duplicate-triangles': 60,
+  'consolidate-duplicate-skin-influences': 70,
 };
 
 const severityPriority: Record<HealthSeverity, number> = {

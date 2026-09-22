@@ -55,6 +55,7 @@ const emptySkeleton: SkinningStats = {
   zeroWeightVertices: 0,
   invalidWeightSumVertices: 0,
   unusedBonesCount: 0,
+  redundantInfluenceVertices: 0,
   bones: [],
 };
 
@@ -172,6 +173,7 @@ export function runDiagnosticCoreTests(): DiagnosticCoreTestResult[] {
       tinyComponentsCount: 0,
       thinTriangles: 0,
       potentialDuplicatePositions: 0,
+      duplicateTriangles: 0,
       minTriangleArea: 0,
       maxTriangleArea: 1,
       avgTriangleArea: 0.5,
@@ -216,6 +218,7 @@ export function runDiagnosticCoreTests(): DiagnosticCoreTestResult[] {
       tinyComponentsCount: 0,
       thinTriangles: 0,
       potentialDuplicatePositions: 0,
+      duplicateTriangles: 0,
       minTriangleArea: 0,
       maxTriangleArea: 1,
       avgTriangleArea: 0.5,
@@ -262,6 +265,7 @@ export function runDiagnosticCoreTests(): DiagnosticCoreTestResult[] {
       tinyComponentsCount: 0,
       thinTriangles: 0,
       potentialDuplicatePositions: 0,
+      duplicateTriangles: 0,
       minTriangleArea: 0,
       maxTriangleArea: 1,
       avgTriangleArea: 0.5,

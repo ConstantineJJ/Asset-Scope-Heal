@@ -11,7 +11,7 @@ import { measureSkinWeights } from '../analysis/SkinWeightMeasure';
 export const healMetricKeys = [
   'triangleCount', 'vertexCount', 'degenerateTriangles', 'boundaryEdges',
   'nonManifoldEdges', 'isolatedVertices', 'componentsCount', 'thinTriangles',
-  'tinyComponentsCount', 'potentialDuplicatePositions',
+  'tinyComponentsCount', 'potentialDuplicatePositions', 'duplicateTriangles',
 ] as const;
 
 export function healMetrics(
@@ -37,6 +37,7 @@ export function healMetrics(
     if (skin.supported) {
       result.invalidSkinWeights = skin.invalidSumCount;
       result.zeroWeightVertices = skin.zeroWeightCount;
+      result.redundantSkinInfluenceVertices = skin.redundantInfluenceVertexCount;
     }
   }
 
@@ -78,6 +79,7 @@ function verifyDegenerateRemoval(
     'thinTriangles',
     'tinyComponentsCount',
     'potentialDuplicatePositions',
+    'duplicateTriangles',
   ] as const) {
     if (measured[key] > before[key]) reasons.push(key);
   }
@@ -118,6 +120,7 @@ function verifyUnreferencedVertexRemoval(
     'componentsCount',
     'thinTriangles',
     'tinyComponentsCount',
+    'duplicateTriangles',
   ] as const) {
     if (measured[key] !== before[key]) reasons.push(key);
   }
@@ -211,6 +214,7 @@ function verifyExactDuplicateMerge(
     'thinTriangles',
     'tinyComponentsCount',
     'potentialDuplicatePositions',
+    'duplicateTriangles',
   ] as const) {
     if (measured[key] > before[key]) reasons.push(key);
   }
@@ -275,6 +279,123 @@ function verifySkinWeightNormalization(
   return { status: 'VERIFIED', reasons: [] };
 }
 
+function verifyDuplicateTriangleRemoval(
+  before: HealMetrics,
+  after: HealMetrics | null,
+  expectedRemoved: number,
+  buffersMatch: boolean
+): { status: HealVerificationStatus; reasons: string[] } {
+  const unavailable = measurementFailure(after, buffersMatch);
+  if (unavailable) return unavailable;
+  const measured = after!;
+
+  const reasons: string[] = [];
+  if (
+    !buffersMatch ||
+    before.vertexCount !== measured.vertexCount ||
+    before.triangleCount - measured.triangleCount !== expectedRemoved
+  ) {
+    reasons.push('unexpectedGeometry');
+  }
+
+  if (measured.duplicateTriangles !== 0 || before.duplicateTriangles !== expectedRemoved) {
+    reasons.push('targetRemaining');
+  }
+
+  for (const key of [
+    'degenerateTriangles',
+    'boundaryEdges',
+    'nonManifoldEdges',
+    'componentsCount',
+    'thinTriangles',
+    'tinyComponentsCount',
+  ] as const) {
+    if (measured[key] > before[key]) reasons.push(key);
+  }
+
+  if (measured.isolatedVertices !== before.isolatedVertices) reasons.push('isolatedVertices');
+  if (measured.potentialDuplicatePositions !== before.potentialDuplicatePositions) {
+    reasons.push('potentialDuplicatePositions');
+  }
+
+  if (
+    before.invalidNormals !== undefined &&
+    measured.invalidNormals !== undefined &&
+    before.invalidNormals !== measured.invalidNormals
+  ) {
+    reasons.push('invalidNormals');
+  }
+
+  if (
+    before.invalidSkinWeights !== undefined &&
+    measured.invalidSkinWeights !== undefined &&
+    before.invalidSkinWeights !== measured.invalidSkinWeights
+  ) {
+    reasons.push('invalidSkinWeights');
+  }
+
+  const regressionReasons = reasons.filter((reason) => reason !== 'targetRemaining');
+  if (regressionReasons.length) return { status: 'REGRESSION', reasons };
+  if (reasons.length) return { status: 'PARTIAL', reasons };
+  return { status: 'VERIFIED', reasons: [] };
+}
+
+function verifyDuplicateSkinInfluenceConsolidation(
+  before: HealMetrics,
+  after: HealMetrics | null,
+  expectedFixed: number,
+  buffersMatch: boolean
+): { status: HealVerificationStatus; reasons: string[] } {
+  const unavailable = measurementFailure(after, buffersMatch);
+  if (unavailable) return unavailable;
+  const measured = after!;
+
+  const reasons: string[] = [];
+  if (!buffersMatch) reasons.push('unexpectedGeometry');
+
+  for (const key of healMetricKeys) {
+    if (measured[key] !== before[key]) reasons.push(key);
+  }
+
+  if (
+    !Number.isFinite(before.redundantSkinInfluenceVertices) ||
+    !Number.isFinite(measured.redundantSkinInfluenceVertices)
+  ) {
+    return {
+      status: reasons.length ? 'REGRESSION' : 'PARTIAL',
+      reasons: [...reasons, 'measurementUnavailable'],
+    };
+  }
+
+  if ((before.redundantSkinInfluenceVertices ?? 0) !== expectedFixed) {
+    reasons.push('unexpectedGeometry');
+  }
+
+  if ((measured.invalidSkinWeights ?? 0) !== (before.invalidSkinWeights ?? 0)) {
+    reasons.push('invalidSkinWeights');
+  }
+
+  if ((measured.zeroWeightVertices ?? 0) !== (before.zeroWeightVertices ?? 0)) {
+    reasons.push('zeroWeightVertices');
+  }
+
+  if (
+    measured.invalidNormals !== undefined &&
+    before.invalidNormals !== undefined &&
+    measured.invalidNormals !== before.invalidNormals
+  ) {
+    reasons.push('invalidNormals');
+  }
+
+  if (reasons.length) return { status: 'REGRESSION', reasons };
+
+  if ((measured.redundantSkinInfluenceVertices ?? 0) !== 0) {
+    return { status: 'PARTIAL', reasons: ['targetRemaining'] };
+  }
+
+  return { status: 'VERIFIED', reasons: [] };
+}
+
 export function verifyHealOperation(
   operation: HealOperationKind,
   before: HealMetrics,
@@ -291,6 +412,10 @@ export function verifyHealOperation(
       return verifyExactDuplicateMerge(before, after, expectedAffected, buffersMatch);
     case 'normalize-skin-weights':
       return verifySkinWeightNormalization(before, after, expectedAffected, buffersMatch);
+    case 'remove-exact-duplicate-triangles':
+      return verifyDuplicateTriangleRemoval(before, after, expectedAffected, buffersMatch);
+    case 'consolidate-duplicate-skin-influences':
+      return verifyDuplicateSkinInfluenceConsolidation(before, after, expectedAffected, buffersMatch);
     case 'remove-degenerate-triangles':
     default:
       return verifyDegenerateRemoval(before, after, expectedAffected, buffersMatch);
