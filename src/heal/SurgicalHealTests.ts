@@ -1436,6 +1436,51 @@ function queueReport(candidate: RepairQueueCandidate, status: 'VERIFIED' | 'PART
   };
 }
 
+function installFileReaderPolyfillForTests(): () => void {
+  if (typeof globalThis.FileReader !== 'undefined') return () => {};
+
+  const previous = (globalThis as typeof globalThis & { FileReader?: unknown }).FileReader;
+
+  class TestFileReader {
+    result: string | ArrayBuffer | null = null;
+    onloadend: ((event?: unknown) => void) | null = null;
+    onerror: ((event?: unknown) => void) | null = null;
+
+    readAsArrayBuffer(blob: Blob) {
+      void blob.arrayBuffer()
+        .then((buffer) => {
+          this.result = buffer;
+          queueMicrotask(() => this.onloadend?.());
+        })
+        .catch(() => this.onerror?.());
+    }
+
+    readAsDataURL(blob: Blob) {
+      void blob.arrayBuffer()
+        .then((buffer) => {
+          const bytes = new Uint8Array(buffer);
+          let binary = '';
+          for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+          }
+          this.result = `data:${blob.type || 'application/octet-stream'};base64,${btoa(binary)}`;
+          queueMicrotask(() => this.onloadend?.());
+        })
+        .catch(() => this.onerror?.());
+    }
+  }
+
+  (globalThis as typeof globalThis & { FileReader?: unknown }).FileReader = TestFileReader;
+
+  return () => {
+    if (previous === undefined) {
+      delete (globalThis as typeof globalThis & { FileReader?: unknown }).FileReader;
+    } else {
+      (globalThis as typeof globalThis & { FileReader?: unknown }).FileReader = previous;
+    }
+  };
+}
+
 export async function runSurgicalHealIntegrationTests(): Promise<SurgicalHealTestResult[]> {
   const results: SurgicalHealTestResult[] = [];
 
@@ -1598,6 +1643,7 @@ export async function runSurgicalHealIntegrationTests(): Promise<SurgicalHealTes
   // operations on the same mesh, export from a pristine source, reopen it, and
   // perform fresh measurements on the serialized result.
   {
+    const restoreFileReader = installFileReaderPolyfillForTests();
     const sample = createAssetDoctorTestPatient();
     const engine = new SurgicalHealEngine();
     const service = new RepairedExportService();
@@ -1704,6 +1750,7 @@ export async function runSurgicalHealIntegrationTests(): Promise<SurgicalHealTes
       loader.dispose();
       if (reopenedRoot) disposeObjectForTest(reopenedRoot);
       disposeObjectForTest(sample.root);
+      restoreFileReader();
     }
   }
 
