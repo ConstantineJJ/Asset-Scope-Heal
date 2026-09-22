@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { analyzeMeshTopology, type RawMeshData } from '../analysis/TopologyAnalyzer';
 import type { TopologyPerformanceStats, TopologyStats } from '../types';
 import { meshTopologyData } from '../analysis/MeshTopologyData';
+import { nowMs, performanceCore } from '../performance/PerformanceProfiler';
 
 const WORKER_TASK_TIMEOUT_MS = 15000;
 
@@ -44,6 +45,7 @@ export class WorkerManager {
   private workerConstructionUnavailable = false;
   private disposed = false;
   private topologyCache = new WeakMap<THREE.Mesh, TopologyCacheEntry>();
+  private activeAnalysisController: AbortController | null = null;
 
   constructor() {
     this.createWorker();
@@ -110,115 +112,151 @@ export class WorkerManager {
     this.topologyCache = new WeakMap<THREE.Mesh, TopologyCacheEntry>();
   }
 
+  public cancelActiveAnalysis() {
+    if (!this.activeAnalysisController) return;
+    this.activeAnalysisController.abort();
+    this.activeAnalysisController = null;
+  }
+
   public async analyzeMeshes(
     root: THREE.Object3D,
     onProgress?: (completed: number, total: number) => void,
     options: WorkerAnalysisOptions = {}
   ): Promise<TopologyStats[]> {
-    const signal = options.signal;
-    if (signal?.aborted) throw abortError();
-
-    const meshes: THREE.Mesh[] = [];
-    root.updateMatrixWorld(true);
-    root.traverse((obj) => {
-      if (obj.name?.startsWith('__ascope_internal_')) return;
-      if (!(obj as THREE.Mesh).isMesh) return;
-      const mesh = obj as THREE.Mesh;
-      if (!mesh.geometry?.attributes.position) return;
-      meshes.push(mesh);
-    });
-
-    const metrics: TopologyPerformanceStats = {
-      meshCount: meshes.length,
-      cacheHits: 0,
-      cacheMisses: 0,
-      extractionMs: 0,
-      workerMs: 0,
-      transferredBytes: 0,
-    };
-    const results: TopologyStats[] = [];
-    if (meshes.length === 0) {
-      options.onMetrics?.(metrics);
-      return results;
+    // A newer load / Rescan / post-repair pass owns the worker. Cancel the old
+    // pass instead of letting it consume CPU and memory just to have App ignore
+    // its stale result later.
+    if (this.activeAnalysisController) {
+      this.activeAnalysisController.abort();
+      performanceCore.cancelAnalysisCycle();
     }
+    const controller = new AbortController();
+    this.activeAnalysisController = controller;
+    const externalAbort = () => controller.abort();
+    options.signal?.addEventListener('abort', externalAbort, { once: true });
+    const signal = controller.signal;
 
-    for (let i = 0; i < meshes.length; i++) {
-      if (signal?.aborted) throw abortError();
-      const mesh = meshes[i];
-      const cached = this.cacheHit(mesh);
-      if (cached) {
-        metrics.cacheHits++;
-        results.push(cached);
-        onProgress?.(i + 1, meshes.length);
-        continue;
+    if (options.signal?.aborted) controller.abort();
+    if (signal.aborted) throw abortError();
+
+    performanceCore.beginTopologyPhase(root.uuid);
+    const topologyStageStart = nowMs();
+
+    try {
+      const meshes: THREE.Mesh[] = [];
+      root.updateMatrixWorld(true);
+      root.traverse((obj) => {
+        if (obj.name?.startsWith('__ascope_internal_')) return;
+        if (!(obj as THREE.Mesh).isMesh) return;
+        const mesh = obj as THREE.Mesh;
+        if (!mesh.geometry?.attributes.position) return;
+        meshes.push(mesh);
+      });
+
+      const metrics: TopologyPerformanceStats = {
+        meshCount: meshes.length,
+        cacheHits: 0,
+        cacheMisses: 0,
+        extractionMs: 0,
+        workerMs: 0,
+        transferredBytes: 0,
+      };
+      const results: TopologyStats[] = [];
+      if (meshes.length === 0) {
+        options.onMetrics?.(metrics);
+        performanceCore.setTopology(metrics);
+        performanceCore.record('topologyWorker', nowMs() - topologyStageStart);
+        performanceCore.completeAnalysisCycle(root.uuid);
+        return results;
       }
 
-      metrics.cacheMisses++;
-      const extractionStart = performance.now();
-      let meshData = meshTopologyData(mesh);
-      metrics.extractionMs += performance.now() - extractionStart;
+      for (let i = 0; i < meshes.length; i++) {
+        if (signal.aborted) throw abortError();
+        const mesh = meshes[i];
+        const cached = this.cacheHit(mesh);
+        if (cached) {
+          metrics.cacheHits++;
+          results.push(cached);
+          onProgress?.(i + 1, meshes.length);
+          continue;
+        }
 
-      if (this.worker) {
-        const transferBytes = meshData.positions.byteLength + (meshData.indices?.byteLength ?? 0);
-        metrics.transferredBytes += transferBytes;
-        const workerStart = performance.now();
-        try {
-          const stats = await this.sendToWorker(meshData, signal);
-          metrics.workerMs += performance.now() - workerStart;
-          results.push(stats);
-          this.storeCache(mesh, stats);
-        } catch (firstError) {
-          metrics.workerMs += performance.now() - workerStart;
-          if (isAbortError(firstError)) throw firstError;
-          console.warn('Topology worker task failed; restarting worker once:', firstError);
+        metrics.cacheMisses++;
+        const extractionStart = nowMs();
+        let meshData = meshTopologyData(mesh);
+        metrics.extractionMs += nowMs() - extractionStart;
 
-          if (!this.restartWorker() || !this.worker) {
-            throw new Error(
-              'Topology worker failed and could not be restarted. Analysis stopped to keep the UI responsive.'
-            );
-          }
-
-          // The first postMessage transfers (detaches) the temporary arrays. A
-          // retry must re-extract from the live geometry instead of cloning all
-          // meshes up front and retaining a second copy in memory.
-          const retryExtractionStart = performance.now();
-          meshData = meshTopologyData(mesh);
-          metrics.extractionMs += performance.now() - retryExtractionStart;
-          metrics.transferredBytes += meshData.positions.byteLength + (meshData.indices?.byteLength ?? 0);
-          const retryStart = performance.now();
+        if (this.worker) {
+          const transferBytes = meshData.positions.byteLength + (meshData.indices?.byteLength ?? 0);
+          metrics.transferredBytes += transferBytes;
+          const workerStart = nowMs();
           try {
             const stats = await this.sendToWorker(meshData, signal);
-            metrics.workerMs += performance.now() - retryStart;
+            metrics.workerMs += nowMs() - workerStart;
             results.push(stats);
             this.storeCache(mesh, stats);
-          } catch (retryError) {
-            metrics.workerMs += performance.now() - retryStart;
-            if (isAbortError(retryError)) throw retryError;
-            console.warn('Topology worker retry failed; aborting this analysis pass:', retryError);
-            if (this.worker) this.worker.terminate();
-            this.worker = null;
-            throw new Error(
-              'Topology worker did not complete after retry. Analysis stopped instead of falling back to a blocking main-thread pass.'
-            );
+          } catch (firstError) {
+            metrics.workerMs += nowMs() - workerStart;
+            if (isAbortError(firstError)) throw firstError;
+            console.warn('Topology worker task failed; restarting worker once:', firstError);
+
+            if (!this.restartWorker() || !this.worker) {
+              throw new Error(
+                'Topology worker failed and could not be restarted. Analysis stopped to keep the UI responsive.'
+              );
+            }
+
+            // The first postMessage transfers (detaches) the temporary arrays. A
+            // retry must re-extract from the live geometry instead of cloning all
+            // meshes up front and retaining a second copy in memory.
+            const retryExtractionStart = nowMs();
+            meshData = meshTopologyData(mesh);
+            metrics.extractionMs += nowMs() - retryExtractionStart;
+            metrics.transferredBytes += meshData.positions.byteLength + (meshData.indices?.byteLength ?? 0);
+            const retryStart = nowMs();
+            try {
+              const stats = await this.sendToWorker(meshData, signal);
+              metrics.workerMs += nowMs() - retryStart;
+              results.push(stats);
+              this.storeCache(mesh, stats);
+            } catch (retryError) {
+              metrics.workerMs += nowMs() - retryStart;
+              if (isAbortError(retryError)) throw retryError;
+              console.warn('Topology worker retry failed; aborting this analysis pass:', retryError);
+              if (this.worker) this.worker.terminate();
+              this.worker = null;
+              throw new Error(
+                'Topology worker did not complete after retry. Analysis stopped instead of falling back to a blocking main-thread pass.'
+              );
+            }
           }
+        } else {
+          // Worker construction can be unavailable on some hosts. Preserve that
+          // compatibility path, but yield before local analysis so UI state paints.
+          await new Promise<void>((resolve) => setTimeout(resolve, 4));
+          if (signal.aborted) throw abortError();
+          const workerStart = nowMs();
+          const stats = analyzeMeshTopology(meshData);
+          metrics.workerMs += nowMs() - workerStart;
+          results.push(stats);
+          this.storeCache(mesh, stats);
         }
-      } else {
-        // Worker construction can be unavailable on some hosts. Preserve that
-        // compatibility path, but yield before local analysis so UI state paints.
-        await new Promise<void>((resolve) => setTimeout(resolve, 4));
-        if (signal?.aborted) throw abortError();
-        const workerStart = performance.now();
-        const stats = analyzeMeshTopology(meshData);
-        metrics.workerMs += performance.now() - workerStart;
-        results.push(stats);
-        this.storeCache(mesh, stats);
+
+        onProgress?.(i + 1, meshes.length);
       }
 
-      onProgress?.(i + 1, meshes.length);
+      options.onMetrics?.(metrics);
+      performanceCore.setTopology(metrics);
+      performanceCore.record('topologyWorker', nowMs() - topologyStageStart);
+      performanceCore.completeAnalysisCycle(root.uuid);
+      return results;
+    } catch (error) {
+      if (isAbortError(error)) performanceCore.cancelAnalysisCycle(root.uuid);
+      throw error;
+    } finally {
+      options.signal?.removeEventListener('abort', externalAbort);
+      if (this.activeAnalysisController === controller) this.activeAnalysisController = null;
     }
-
-    options.onMetrics?.(metrics);
-    return results;
   }
 
   private sendToWorker(meshData: RawMeshData, signal?: AbortSignal): Promise<TopologyStats> {
@@ -280,6 +318,7 @@ export class WorkerManager {
 
   public dispose() {
     this.disposed = true;
+    this.cancelActiveAnalysis();
     this.clearCache();
     if (this.worker) {
       this.worker.terminate();
