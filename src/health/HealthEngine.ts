@@ -448,6 +448,8 @@ export interface HealthAggregateParams {
   textures: TextureInfo[];
   skeleton: SkinningStats;
   animations?: import('../types').AnimationClipInfo[];
+  integrity?: HealthIssue[];
+  animationDiagnostics?: HealthIssue[];
   transforms?: HealthIssue[];
   performance?: { stats?: any; issues?: HealthIssue[] } | HealthIssue[];
   normalsAndUv?: HealthIssue[];
@@ -645,6 +647,9 @@ export class HealthEngine {
 
     // Diagnostic Core v1 — Layer 1: Integrity.
     issues.push(...evaluateIntegrity(params.summary));
+    if (params.integrity && Array.isArray(params.integrity)) {
+      issues.push(...params.integrity);
+    }
 
     // 1. Materials
     issues.push(...evaluateMaterialIssues(params.materials));
@@ -658,12 +663,17 @@ export class HealthEngine {
     // Diagnostic Core v1 — Layer 3: profile-dependent Fitness expectations.
     issues.push(...evaluateProfileExpectations(params.summary, profileId));
 
-    // 4. Transforms
+    // 4. Animation diagnostics
+    if (params.animationDiagnostics && Array.isArray(params.animationDiagnostics)) {
+      issues.push(...params.animationDiagnostics);
+    }
+
+    // 5. Transforms
     if (params.transforms && Array.isArray(params.transforms)) {
       issues.push(...params.transforms);
     }
 
-    // 5. Performance
+    // 6. Performance
     if (params.performance) {
       if (Array.isArray(params.performance)) {
         issues.push(...params.performance);
@@ -672,12 +682,12 @@ export class HealthEngine {
       }
     }
 
-    // 6. Normals and UVs
+    // 7. Normals and UVs
     if (params.normalsAndUv && Array.isArray(params.normalsAndUv)) {
       issues.push(...params.normalsAndUv);
     }
 
-    // 7. Topology issues
+    // 8. Topology issues
     if (params.topology && params.topology.length > 0) {
       issues.push(...aggregateTopologyIssues(params.topology));
     }
