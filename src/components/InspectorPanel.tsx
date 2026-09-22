@@ -1217,9 +1217,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               <h4 className="font-semibold text-gray-300 uppercase tracking-wider text-[10px]">
                 Clips & Root Motion
               </h4>
-              {summary.clips.map((clip) => (
+              {summary.clips.map((clip, clipIndex) => (
                 <div
-                  key={clip.name}
+                  key={`${clipIndex}:${clip.name}`}
                   className="p-2 rounded bg-[#1c1e24] border border-[#2c3039] space-y-1"
                 >
                   <div className="flex items-center justify-between">
@@ -1244,8 +1244,18 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                       TRACKS: {clip.trackCount}
                     </span>
                   </div>
-                  <div className="text-[9px] text-gray-500 font-mono">
-                    Root rotation delta: {clip.rootMotionRotation ?? 0}°
+                  <div className="text-[9px] text-gray-500 font-mono space-y-0.5">
+                    <div>Root rotation delta: {clip.rootMotionRotation ?? 0}°</div>
+                    {clip.rootMotionDelta && (
+                      <div>
+                        Translation vector: [{clip.rootMotionDelta.map((value) => value.toFixed(3)).join(', ')}]
+                      </div>
+                    )}
+                    {clip.rootMotionTrackName && (
+                      <div className="truncate" title={clip.rootMotionTrackName}>
+                        Track: {clip.rootMotionTrackName}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

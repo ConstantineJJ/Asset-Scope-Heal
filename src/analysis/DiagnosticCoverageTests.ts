@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { DiagnosticCoreTestResult } from './DiagnosticCoreTests';
 import { analyzeIntegrity } from './IntegrityAnalyzer';
 import { analyzeAnimationDiagnostics } from './AnimationDiagnostics';
+import { measureRootMotion } from './AnimationAnalyzer';
 import { analyzeNormalsAndUv } from './NormalsAndUvAnalyzer';
 import { analyzeTransforms } from './TransformAnalyzer';
 
@@ -76,6 +77,48 @@ export function runDiagnosticCoverageTests(): DiagnosticCoreTestResult[] {
       expected: 'uv-zero-area-triangles / WARNING',
       actual: finding ? `${finding.id} / ${finding.severity}` : 'missing',
       passed: finding?.severity === 'WARNING' && finding.repairability === 'MANUAL',
+    });
+  }
+
+  {
+    const clip = new THREE.AnimationClip('WalkForward', 1, [
+      new THREE.VectorKeyframeTrack('Root.position', [0, 1], [0, 0, 0, 1.25, 0, -0.5]),
+      new THREE.QuaternionKeyframeTrack(
+        'Root.quaternion',
+        [0, 1],
+        [0, 0, 0, 1, 0, Math.sin(Math.PI / 8), 0, Math.cos(Math.PI / 8)]
+      ),
+    ]);
+
+    const measurement = measureRootMotion(clip, ['Root']);
+
+    results.push({
+      name: 'Root Motion Vector Measurement Test',
+      description: 'Root motion must preserve its measured translation vector and source track for viewport visualization.',
+      expected: 'detected=true, translation≈1.346, delta=[1.25,0,-0.5], track=Root.position',
+      actual: `detected=${measurement.detected}, translation=${measurement.translation}, delta=[${measurement.delta.join(',')}], track=${measurement.translationTrackName ?? 'missing'}`,
+      passed:
+        measurement.detected === true &&
+        Math.abs(measurement.translation - Math.sqrt(1.25 * 1.25 + 0.5 * 0.5)) < 0.002 &&
+        Math.abs(measurement.delta[0] - 1.25) < 1e-6 &&
+        Math.abs(measurement.delta[1]) < 1e-6 &&
+        Math.abs(measurement.delta[2] + 0.5) < 1e-6 &&
+        measurement.translationTrackName === 'Root.position',
+    });
+  }
+
+  {
+    const clip = new THREE.AnimationClip('HandOnly', 1, [
+      new THREE.VectorKeyframeTrack('Hand.position', [0, 1], [0, 0, 0, 2, 0, 0]),
+    ]);
+    const measurement = measureRootMotion(clip, ['Root']);
+
+    results.push({
+      name: 'Non Root Motion Rejection Test',
+      description: 'Large translation on a non-root channel must not be mislabeled as root motion.',
+      expected: 'detected=false, translation=0',
+      actual: `detected=${measurement.detected}, translation=${measurement.translation}`,
+      passed: measurement.detected === false && measurement.translation === 0,
     });
   }
 

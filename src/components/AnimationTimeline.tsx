@@ -27,6 +27,8 @@ interface AnimationTimelineProps {
   onSetSpeed: (speed: number) => void;
   isLooping: boolean;
   onToggleLoop: () => void;
+  showRootMotion: boolean;
+  onToggleRootMotion: () => void;
 }
 
 export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
@@ -44,6 +46,8 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
   onSetSpeed,
   isLooping,
   onToggleLoop,
+  showRootMotion,
+  onToggleRootMotion,
 }) => {
   if (!clips || clips.length === 0) return null;
 
@@ -65,7 +69,7 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
             className="bg-transparent text-gray-200 text-xs focus:outline-none cursor-pointer font-medium"
           >
             {clips.map((clip, idx) => (
-              <option key={clip.name} value={idx} className="bg-[#1f2228]">
+              <option key={`${idx}:${clip.name}`} value={idx} className="bg-[#1f2228]">
                 {clip.name} ({clip.duration.toFixed(2)}s)
               </option>
             ))}
@@ -73,12 +77,25 @@ export const AnimationTimeline: React.FC<AnimationTimelineProps> = ({
         </div>
 
         {activeClip?.rootMotionDetected && (
-          <span
-            className="hidden lg:inline px-2 py-0.5 rounded bg-purple-950/80 border border-purple-800 text-purple-300 text-[10px] font-mono"
-            title="Root bone translation displacement detected over clip"
-          >
-            Root Motion: {activeClip.rootMotionTranslation}m
-          </span>
+          <div className="hidden lg:flex items-center gap-1.5">
+            <span
+              className="px-2 py-0.5 rounded bg-purple-950/80 border border-purple-800 text-purple-300 text-[10px] font-mono"
+              title="Root bone translation displacement detected over clip"
+            >
+              Root Motion: {activeClip.rootMotionTranslation}m
+            </span>
+            <button
+              onClick={onToggleRootMotion}
+              className={`px-1.5 py-0.5 rounded border text-[10px] font-mono cursor-pointer transition ${
+                showRootMotion
+                  ? 'bg-purple-900/70 border-purple-600 text-purple-200'
+                  : 'bg-[#1f2228] border-[#3a3344] text-gray-400 hover:text-purple-300'
+              }`}
+              title="Show the measured root-motion vector in the viewport"
+            >
+              Path {showRootMotion ? 'ON' : 'OFF'}
+            </button>
+          </div>
         )}
       </div>
 

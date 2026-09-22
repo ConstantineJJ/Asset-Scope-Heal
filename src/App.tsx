@@ -148,6 +148,7 @@ export function App() {
   const [animationDuration, setAnimationDuration] = useState(0);
   const [animationSpeed, setAnimationSpeed] = useState(1.0);
   const [isLoopingAnimation, setIsLoopingAnimation] = useState(true);
+  const [showRootMotion, setShowRootMotion] = useState(false);
 
   // FPS & Metrics
   const [fps, setFps] = useState(60);
@@ -432,8 +433,10 @@ export function App() {
       setSelectedUuid(null);
       setSelectedNode(null);
       setIsIssueFocusActive(false);
+      setShowRootMotion(false);
 
       if (sceneManagerRef.current) {
+        sceneManagerRef.current.setRootMotionVisible(false);
         sceneManagerRef.current.setAsset(root, clips);
       }
 
@@ -471,6 +474,9 @@ export function App() {
           onAnimationTimeUpdate: (time, duration) => {
             setAnimationTime(time);
             setAnimationDuration(duration);
+          },
+          onAnimationPlaybackStateChange: (playing) => {
+            setIsPlayingAnimation(playing);
           },
         });
         sceneManagerRef.current = mgr;
@@ -1083,10 +1089,13 @@ export function App() {
 
   // Animation Handlers
   const handleSelectClip = (idx: number) => {
+    if (!Number.isInteger(idx) || idx < 0 || idx >= animationClips.length) return;
+    const manager = sceneManagerRef.current;
+    if (!manager || !manager.playAnimationClip(idx)) return;
+
     setActiveClipIndex(idx);
     setAnimationTime(0);
     setAnimationDuration(animationClips[idx]?.duration ?? 0);
-    sceneManagerRef.current?.playAnimationClip(idx);
     setIsPlayingAnimation(true);
   };
 
@@ -1122,6 +1131,12 @@ export function App() {
     const next = !isLoopingAnimation;
     setIsLoopingAnimation(next);
     sceneManagerRef.current?.setAnimationLoop(next);
+  };
+
+  const handleToggleRootMotion = () => {
+    const next = !showRootMotion;
+    setShowRootMotion(next);
+    sceneManagerRef.current?.setRootMotionVisible(next);
   };
 
   // Keyboard Shortcuts (F to frame, Space for animation play/pause, Z for wireframe toggle)
@@ -1271,6 +1286,8 @@ export function App() {
         onSetSpeed={handleSetSpeed}
         isLooping={isLoopingAnimation}
         onToggleLoop={handleToggleLoop}
+        showRootMotion={showRootMotion}
+        onToggleRootMotion={handleToggleRootMotion}
       />
 
       {/* Topology Unit Test Verification Modal */}

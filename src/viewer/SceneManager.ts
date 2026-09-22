@@ -5,10 +5,12 @@ import { LightingManager } from './LightingManager';
 import { RenderModeManager } from './RenderModeManager';
 import { BoundsCalculator, AccurateBoundsResult } from './BoundsCalculator';
 import type { HealthIssue, LightingConfig, LightingPreset, RenderMode } from '../types';
+import { measureRootMotion } from '../analysis/AnimationAnalyzer';
 
 export interface SceneManagerCallbacks {
   onMeshSelected?: (uuid: string | null) => void;
   onAnimationTimeUpdate?: (time: number, duration: number) => void;
+  onAnimationPlaybackStateChange?: (playing: boolean) => void;
 }
 
 export class SceneManager {
@@ -38,6 +40,7 @@ export class SceneManager {
   private skeletonHelper: THREE.SkeletonHelper | null = null;
   private selectionBoxHelper: THREE.BoxHelper | null = null;
   private selectedBoneMarker: THREE.Mesh | null = null;
+  private rootMotionHelper: THREE.Group | null = null;
   private issueOverlay: THREE.Object3D | null = null;
   private orientationWidget: HTMLDivElement | null = null;
   private orientationAxes: Record<'x' | 'y' | 'z', { line: SVGLineElement; label: SVGTextElement }> | null = null;
@@ -53,6 +56,7 @@ export class SceneManager {
   private isBboxVisible: boolean = false;
   private isSkeletonVisible: boolean = false;
   private isSkeletonXray: boolean = false;
+  private isRootMotionVisible: boolean = false;
   private isOriginVisible: boolean = true;
 
   private selectedMeshUuid: string | null = null;
@@ -524,6 +528,13 @@ export class SceneManager {
     this.animationClips = clips;
     if (clips.length > 0) {
       this.animationMixer = new THREE.AnimationMixer(assetRoot);
+      this.animationMixer.addEventListener('finished', () => {
+        if (this.animationLoop) return;
+        this.isPlayingAnimation = false;
+        this.callbacks.onAnimationPlaybackStateChange?.(false);
+        const duration = this.activeAnimationAction?.getClip().duration ?? 0;
+        this.callbacks.onAnimationTimeUpdate?.(duration, duration);
+      });
       this.playAnimationClip(0);
     }
 
@@ -559,35 +570,64 @@ export class SceneManager {
     console.log('[AssetDoctor Whole-Model Inspection]', this.lastWholeModelInspection);
   }
 
-  public playAnimationClip(clipIndex: number) {
-    if (!this.animationMixer || !this.animationClips[clipIndex]) return;
+  public playAnimationClip(clipIndex: number): boolean {
+    if (
+      !this.animationMixer ||
+      !Number.isInteger(clipIndex) ||
+      clipIndex < 0 ||
+      clipIndex >= this.animationClips.length
+    ) {
+      return false;
+    }
 
     if (this.activeAnimationAction) {
       this.activeAnimationAction.stop();
     }
 
     const clip = this.animationClips[clipIndex];
-    this.activeAnimationAction = this.animationMixer.clipAction(clip);
-    this.activeAnimationAction.setLoop(
-      this.animationLoop ? THREE.LoopRepeat : THREE.LoopOnce,
-      Infinity
-    );
-    this.activeAnimationAction.timeScale = this.animationSpeed;
-    this.activeAnimationAction.play();
+    const action = this.animationMixer.clipAction(clip);
+    action.reset();
+    action.enabled = true;
+    action.paused = false;
+    action.clampWhenFinished = !this.animationLoop;
+    action.setLoop(this.animationLoop ? THREE.LoopRepeat : THREE.LoopOnce, this.animationLoop ? Infinity : 1);
+    action.setEffectiveTimeScale(this.animationSpeed);
+    action.play();
+
+    this.activeAnimationAction = action;
+    this.animationMixer.setTime(0);
+    this.animationMixer.update(0);
     this.isPlayingAnimation = true;
+
+    this.updateRootMotionHelper(clip);
     this.callbacks.onAnimationTimeUpdate?.(0, clip.duration);
+    this.callbacks.onAnimationPlaybackStateChange?.(true);
+    return true;
   }
 
   public toggleAnimationPlay(play?: boolean) {
-    this.isPlayingAnimation = play !== undefined ? play : !this.isPlayingAnimation;
-    if (this.activeAnimationAction) {
-      if (this.isPlayingAnimation) this.activeAnimationAction.play();
-      this.activeAnimationAction.paused = !this.isPlayingAnimation;
+    if (!this.activeAnimationAction) return;
+
+    const shouldPlay = play !== undefined ? play : !this.isPlayingAnimation;
+    const duration = this.activeAnimationAction.getClip().duration;
+
+    if (shouldPlay && !this.animationLoop && this.activeAnimationAction.time >= duration - 1e-6) {
+      this.activeAnimationAction.reset();
+      this.animationMixer?.setTime(0);
+      this.animationMixer?.update(0);
+      this.callbacks.onAnimationTimeUpdate?.(0, duration);
     }
+
+    this.isPlayingAnimation = shouldPlay;
+    if (shouldPlay) this.activeAnimationAction.play();
+    this.activeAnimationAction.paused = !shouldPlay;
+    this.callbacks.onAnimationPlaybackStateChange?.(shouldPlay);
   }
 
   public stopAnimation() {
     this.isPlayingAnimation = false;
+    const duration = this.activeAnimationAction?.getClip().duration ?? 0;
+
     if (this.activeAnimationAction) {
       this.activeAnimationAction.stop();
       this.activeAnimationAction.reset();
@@ -595,8 +635,21 @@ export class SceneManager {
     if (this.animationMixer) {
       this.animationMixer.setTime(0);
     }
-    const duration = this.activeAnimationAction?.getClip().duration ?? 0;
+
+    // Stop means "return to the authored rest/bind pose", not merely freeze at t=0.
+    const posedSkeletons = new Set<THREE.Skeleton>();
+    this.currentAssetRoot?.traverse((object) => {
+      if (!(object as THREE.SkinnedMesh).isSkinnedMesh) return;
+      const skeleton = (object as THREE.SkinnedMesh).skeleton;
+      if (!skeleton || posedSkeletons.has(skeleton)) return;
+      skeleton.pose();
+      skeleton.update();
+      posedSkeletons.add(skeleton);
+    });
+    this.currentAssetRoot?.updateMatrixWorld(true);
+
     this.callbacks.onAnimationTimeUpdate?.(0, duration);
+    this.callbacks.onAnimationPlaybackStateChange?.(false);
   }
 
   public seekAnimation(normalizedTime: number) {
@@ -622,8 +675,13 @@ export class SceneManager {
     this.isPlayingAnimation = false;
     const duration = this.activeAnimationAction.getClip().duration;
     let newTime = this.activeAnimationAction.time + stepSeconds;
-    if (newTime > duration) newTime = 0;
-    if (newTime < 0) newTime = duration;
+
+    if (this.animationLoop) {
+      if (newTime > duration) newTime = 0;
+      if (newTime < 0) newTime = duration;
+    } else {
+      newTime = THREE.MathUtils.clamp(newTime, 0, duration);
+    }
 
     this.activeAnimationAction.paused = false;
     this.activeAnimationAction.time = newTime;
@@ -631,6 +689,7 @@ export class SceneManager {
     this.activeAnimationAction.paused = true;
 
     this.callbacks.onAnimationTimeUpdate?.(newTime, duration);
+    this.callbacks.onAnimationPlaybackStateChange?.(false);
   }
 
   public setAnimationSpeed(speed: number) {
@@ -643,8 +702,147 @@ export class SceneManager {
   public setAnimationLoop(loop: boolean) {
     this.animationLoop = loop;
     if (this.activeAnimationAction) {
-      this.activeAnimationAction.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
+      this.activeAnimationAction.clampWhenFinished = !loop;
+      this.activeAnimationAction.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
     }
+  }
+
+  public setRootMotionVisible(visible: boolean) {
+    this.isRootMotionVisible = visible;
+    if (!visible) {
+      this.clearRootMotionHelper();
+      return;
+    }
+
+    const clip = this.activeAnimationAction?.getClip();
+    if (clip) this.updateRootMotionHelper(clip);
+  }
+
+  private getRootBoneNames(): string[] {
+    if (!this.currentAssetRoot) return [];
+    const names: string[] = [];
+    this.currentAssetRoot.traverse((object) => {
+      if (!(object as THREE.Bone).isBone) return;
+      if (!object.parent || !(object.parent as THREE.Bone).isBone) {
+        names.push(object.name);
+      }
+    });
+    return names.filter(Boolean);
+  }
+
+  private resolveRootMotionTarget(trackName?: string): THREE.Object3D | null {
+    if (!trackName || !this.currentAssetRoot) return null;
+
+    try {
+      const parsed = THREE.PropertyBinding.parseTrackName(trackName);
+      if (parsed.objectName === 'bones' && parsed.objectIndex !== undefined) {
+        const boneName = String(parsed.objectIndex);
+        let match: THREE.Bone | null = null;
+        this.currentAssetRoot.traverse((object) => {
+          if (!match && (object as THREE.Bone).isBone && object.name === boneName) {
+            match = object as THREE.Bone;
+          }
+        });
+        if (match) return match;
+      }
+
+      if (parsed.nodeName) {
+        const found = THREE.PropertyBinding.findNode(this.currentAssetRoot, parsed.nodeName);
+        return found && (found as THREE.Object3D).isObject3D ? (found as THREE.Object3D) : null;
+      }
+    } catch {
+      // Root-motion visualization is advisory; unresolved bindings simply fall back to asset root.
+    }
+
+    return null;
+  }
+
+  private clearRootMotionHelper() {
+    if (!this.rootMotionHelper) return;
+    this.scene.remove(this.rootMotionHelper);
+    this.rootMotionHelper.traverse((object) => {
+      const renderable = object as THREE.Object3D & {
+        geometry?: THREE.BufferGeometry;
+        material?: THREE.Material | THREE.Material[];
+      };
+      renderable.geometry?.dispose();
+      if (Array.isArray(renderable.material)) {
+        renderable.material.forEach((material) => material.dispose());
+      } else {
+        renderable.material?.dispose();
+      }
+    });
+    this.rootMotionHelper = null;
+  }
+
+  private updateRootMotionHelper(clip: THREE.AnimationClip) {
+    this.clearRootMotionHelper();
+    if (!this.isRootMotionVisible || !this.currentAssetRoot) return;
+
+    const measurement = measureRootMotion(clip, this.getRootBoneNames());
+    if (!measurement.detected || measurement.translation <= 0) return;
+
+    this.currentAssetRoot.updateMatrixWorld(true);
+    const target = this.resolveRootMotionTarget(measurement.translationTrackName);
+    const origin = new THREE.Vector3();
+    (target ?? this.currentAssetRoot).getWorldPosition(origin);
+
+    const localDelta = new THREE.Vector3(...measurement.delta);
+    const parentMatrix = target?.parent?.matrixWorld ?? this.currentAssetRoot.matrixWorld;
+    const worldDelta = localDelta.applyMatrix3(new THREE.Matrix3().setFromMatrix4(parentMatrix));
+    const length = worldDelta.length();
+    if (!Number.isFinite(length) || length <= 1e-6) return;
+
+    const direction = worldDelta.clone().normalize();
+    const assetDiagonal = Math.max(this.getAssetDiagonal(), length);
+    const headLength = Math.min(length * 0.25, assetDiagonal * 0.04);
+    const headWidth = Math.min(length * 0.12, assetDiagonal * 0.018);
+
+    const helper = new THREE.Group();
+    helper.name = '__ascope_internal_root_motion';
+
+    const arrow = new THREE.ArrowHelper(
+      direction,
+      origin,
+      length,
+      0xa855f7,
+      Math.max(headLength, assetDiagonal * 0.008),
+      Math.max(headWidth, assetDiagonal * 0.004)
+    );
+    arrow.name = '__ascope_internal_root_motion_arrow';
+    arrow.renderOrder = 998;
+    const arrowLineMaterial = arrow.line.material as THREE.LineBasicMaterial;
+    arrowLineMaterial.depthTest = false;
+    arrowLineMaterial.depthWrite = false;
+    arrowLineMaterial.transparent = true;
+    arrowLineMaterial.opacity = 0.95;
+    const arrowConeMaterial = arrow.cone.material as THREE.MeshBasicMaterial;
+    arrowConeMaterial.depthTest = false;
+    arrowConeMaterial.depthWrite = false;
+    arrowConeMaterial.transparent = true;
+    arrowConeMaterial.opacity = 0.95;
+
+    const markerRadius = Math.max(assetDiagonal * 0.006, length * 0.025);
+    const startMarker = new THREE.Mesh(
+      new THREE.SphereGeometry(markerRadius, 12, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0xc084fc,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.9,
+      })
+    );
+    startMarker.position.copy(origin);
+    startMarker.renderOrder = 999;
+
+    const endMarker = startMarker.clone();
+    endMarker.material = (startMarker.material as THREE.MeshBasicMaterial).clone();
+    endMarker.position.copy(origin).add(worldDelta);
+
+    helper.add(arrow, startMarker, endMarker);
+    this.rootMotionHelper = helper;
+    this.scene.add(helper);
   }
 
   public selectObject(uuid: string | null) {
@@ -1365,6 +1563,8 @@ export class SceneManager {
       (this.selectedBoneMarker.material as THREE.Material).dispose();
       this.selectedBoneMarker = null;
     }
+
+    this.clearRootMotionHelper();
 
     this.explodedViewController.reset();
     this.renderModeManager.resetAll(this.currentAssetRoot);

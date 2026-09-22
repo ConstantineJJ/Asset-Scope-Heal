@@ -186,6 +186,8 @@ export interface AnimationClipInfo {
   rootMotionTranslation?: number;
   rootMotionRotation?: number;
   rootMotionDetected?: boolean;
+  rootMotionDelta?: [number, number, number];
+  rootMotionTrackName?: string;
 }
 
 export interface AssetSummary {
