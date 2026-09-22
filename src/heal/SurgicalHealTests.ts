@@ -13,7 +13,10 @@ import type { HealthIssue } from '../types';
 import { createAssetDoctorTestPatient } from '../loaders/SampleModels';
 import { measureGeometryNormals } from '../analysis/NormalsMeasure';
 import { measureSkinWeights } from '../analysis/SkinWeightMeasure';
-import { buildRepairQueueCandidates } from './RepairQueue';
+import { buildRepairQueueCandidates, type RepairQueueCandidate } from './RepairQueue';
+import { runSafeRepairQueue } from './SafeRepairQueueRunner';
+import { RepairedExportService } from '../export/RepairedExportService';
+import { GLBLoaderService } from '../loaders/GLBLoaderService';
 
 export interface SurgicalHealTestResult {
   name: string;
@@ -284,6 +287,59 @@ function makeDuplicateSkinInfluenceFixture() {
   root.add(mesh);
   root.updateMatrixWorld(true);
   return { root, mesh };
+}
+
+function makeChainedRepairFixture() {
+  const root = new THREE.Group();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+    2, 0, 0,
+    3, 0, 0,
+    4, 0, 0,
+    9, 9, 9,
+  ], 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    0, 0, 0,
+    0, 0, 0,
+    0, 0, 0,
+    0, 0, 0,
+    0, 0, 0,
+    0, 0, 0,
+  ], 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute([
+    0, 0,
+    1, 0,
+    0, 1,
+    0, 0,
+    0.5, 0,
+    1, 0,
+    0.5, 0.5,
+  ], 2));
+  geometry.setIndex([0, 1, 2, 3, 4, 5]);
+
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  mesh.name = 'ChainedRepairFixture';
+  root.add(mesh);
+  root.updateMatrixWorld(true);
+  return { root, mesh };
+}
+
+function disposeObjectForTest(root: THREE.Object3D) {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  root.traverse((obj) => {
+    if (!(obj as THREE.Mesh).isMesh) return;
+    const mesh = obj as THREE.Mesh;
+    if (mesh.geometry) geometries.add(mesh.geometry);
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    mats.forEach((material) => materials.add(material));
+  });
+  geometries.forEach((geometry) => geometry.dispose());
+  materials.forEach((material) => material.dispose());
 }
 
 export function runSurgicalHealTests(): SurgicalHealTestResult[] {
