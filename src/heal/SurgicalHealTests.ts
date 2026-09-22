@@ -1278,6 +1278,76 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
     );
   });
 
+  test('E1 skin-weight normalization preserves bone indices exactly', () => {
+    const { root, mesh } = makeSkinWeightFixture(false);
+    const engine = new SurgicalHealEngine();
+    try {
+      const preview = engine.previewNormalizeSkinWeights(root, mesh.uuid);
+      if (preview.status !== 'READY') return false;
+      const applied = engine.applyPending(root, 'E1_SkinInvariant.glb');
+      const report = engine.getLastOperation();
+      return Boolean(
+        applied.success &&
+        report?.targetStatus === 'VERIFIED' &&
+        report.before.skinIndexSignature &&
+        report.before.skinIndexSignature === report.after?.skinIndexSignature
+      );
+    } finally {
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+  });
+
+  test('E2 several repairs on one mesh remain independently undoable', () => {
+    const { root, mesh } = makeChainedRepairFixture();
+    const engine = new SurgicalHealEngine();
+    try {
+      const firstPreview = engine.previewRemoveDegenerateTriangles(root, mesh.uuid);
+      const first = firstPreview.status === 'READY'
+        ? engine.applyPending(root, 'E2_Chained.glb')
+        : { success: false };
+      if (!first.success || !first.report) return false;
+      engine.completeVerification(first.report.operationId, true);
+
+      const secondPreview = engine.previewRemoveUnreferencedVertices(root, mesh.uuid);
+      const second = secondPreview.status === 'READY'
+        ? engine.applyPending(root, 'E2_Chained.glb')
+        : { success: false };
+      if (!second.success || !second.report) return false;
+      engine.completeVerification(second.report.operationId, true);
+
+      const thirdPreview = engine.previewRecalculateNormals(root, mesh.uuid, 'normals-zero');
+      const third = thirdPreview.status === 'READY'
+        ? engine.applyPending(root, 'E2_Chained.glb')
+        : { success: false };
+      if (!third.success || !third.report) return false;
+      engine.completeVerification(third.report.operationId, true);
+
+      const afterThree = engine.validateCurrentVerifiedSession(root);
+      const normalsAfterThree = measureGeometryNormals(mesh.geometry);
+
+      const undo = engine.undoLast(root);
+      const afterUndo = engine.validateCurrentVerifiedSession(root);
+      const normalsAfterUndo = measureGeometryNormals(mesh.geometry);
+      const topologyAfterUndo = analyzeMeshTopology(meshTopologyData(mesh));
+
+      return (
+        afterThree.ok &&
+        afterThree.reports.length === 3 &&
+        normalsAfterThree.invalidCount === 0 &&
+        undo.success &&
+        afterUndo.ok &&
+        afterUndo.reports.length === 2 &&
+        topologyAfterUndo.degenerateTriangles === 0 &&
+        topologyAfterUndo.isolatedVertices === 0 &&
+        normalsAfterUndo.invalidCount === 3
+      );
+    } finally {
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+  });
+
   fixtureTest('Topology extraction respects interleaved attributes and local scale', ({ root, mesh }, engine) => {
     const data = new THREE.InterleavedBuffer(new Float32Array([
       0,0,0,99, 1,0,0,99, 0,1,0,99, 2,0,0,99, 3,0,0,99, 4,0,0,99,
