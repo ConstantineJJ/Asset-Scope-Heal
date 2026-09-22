@@ -11,9 +11,11 @@ export interface SkinningStats {
   zeroWeightVertices: number;
   invalidWeightSumVertices: number;
   unusedBonesCount: number;
+  redundantInfluenceVertices: number;
   bones: BoneInfo[];
   invalidWeightLocations?: DiagnosticLocation[];
   zeroWeightLocations?: DiagnosticLocation[];
+  redundantInfluenceLocations?: DiagnosticLocation[];
 }
 
 export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats {
@@ -67,8 +69,10 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
   let maxInfluences = 0;
   let zeroWeightVertices = 0;
   let invalidWeightSumVertices = 0;
+  let redundantInfluenceVertices = 0;
   const zeroWeightLocations: DiagnosticLocation[] = [];
   const invalidWeightLocations: DiagnosticLocation[] = [];
+  const redundantInfluenceLocations: DiagnosticLocation[] = [];
 
   for (const sm of skinnedMeshes) {
     const geom = sm.geometry;
@@ -84,6 +88,8 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
       for (let i = 0; i < vCount; i++) {
         let weightSum = 0;
         let activeInfluences = 0;
+        let redundantActiveInfluence = false;
+        const activeBoneIndices = new Set<number>();
 
         for (let j = 0; j < itemSize; j++) {
           const w = skinWeight.getComponent(i, j);
@@ -91,9 +97,24 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
           if (w > 0.001) {
             activeInfluences++;
             weightSum += w;
+            if (activeBoneIndices.has(bIdx)) redundantActiveInfluence = true;
+            activeBoneIndices.add(bIdx);
             if (sm.skeleton && sm.skeleton.bones[bIdx]) {
               referencedBones.add(sm.skeleton.bones[bIdx].uuid);
             }
+          }
+        }
+
+        if (redundantActiveInfluence) {
+          redundantInfluenceVertices++;
+          if (redundantInfluenceLocations.length < 16) {
+            redundantInfluenceLocations.push({
+              meshUuid: sm.uuid,
+              meshName: sm.name || `SkinnedMesh_${sm.id}`,
+              affectedElement: 'vertex',
+              affectedIndices: [i],
+              focusPosition: skinnedVertexWorldPosition(sm, i),
+            });
           }
         }
 
@@ -146,9 +167,11 @@ export function analyzeSkeletonAndSkinning(root: THREE.Object3D): SkinningStats 
     zeroWeightVertices,
     invalidWeightSumVertices,
     unusedBonesCount,
+    redundantInfluenceVertices,
     bones,
     invalidWeightLocations,
     zeroWeightLocations,
+    redundantInfluenceLocations,
   };
 }
 
