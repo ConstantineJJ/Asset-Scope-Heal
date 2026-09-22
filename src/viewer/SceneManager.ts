@@ -37,6 +37,7 @@ export class SceneManager {
   private originHelper: THREE.Group | null = null;
   private skeletonHelper: THREE.SkeletonHelper | null = null;
   private selectionBoxHelper: THREE.BoxHelper | null = null;
+  private selectedBoneMarker: THREE.Mesh | null = null;
   private issueOverlay: THREE.Object3D | null = null;
   private orientationWidget: HTMLDivElement | null = null;
   private orientationAxes: Record<'x' | 'y' | 'z', { line: SVGLineElement; label: SVGTextElement }> | null = null;
@@ -51,6 +52,7 @@ export class SceneManager {
   private isAxesVisible: boolean = true;
   private isBboxVisible: boolean = false;
   private isSkeletonVisible: boolean = false;
+  private isSkeletonXray: boolean = false;
   private isOriginVisible: boolean = true;
 
   private selectedMeshUuid: string | null = null;
@@ -426,6 +428,7 @@ export class SceneManager {
     this.skeletonHelper.name = '__ascope_internal_skeleton';
     this.skeletonHelper.visible = this.isSkeletonVisible;
     this.skeletonHelper.frustumCulled = false;
+    this.applySkeletonXrayMaterial();
     this.scene.add(this.skeletonHelper);
 
     // 5. Animations setup
@@ -489,6 +492,7 @@ export class SceneManager {
   public toggleAnimationPlay(play?: boolean) {
     this.isPlayingAnimation = play !== undefined ? play : !this.isPlayingAnimation;
     if (this.activeAnimationAction) {
+      if (this.isPlayingAnimation) this.activeAnimationAction.play();
       this.activeAnimationAction.paused = !this.isPlayingAnimation;
     }
   }
@@ -564,13 +568,38 @@ export class SceneManager {
       this.selectionBoxHelper.dispose();
       this.selectionBoxHelper = null;
     }
+    if (this.selectedBoneMarker) {
+      this.scene.remove(this.selectedBoneMarker);
+      this.selectedBoneMarker.geometry.dispose();
+      (this.selectedBoneMarker.material as THREE.Material).dispose();
+      this.selectedBoneMarker = null;
+    }
 
     if (uuid && this.currentAssetRoot) {
       const obj = this.currentAssetRoot.getObjectByProperty('uuid', uuid);
       if (obj) {
-        this.selectionBoxHelper = new THREE.BoxHelper(obj, 0x00f0ff);
-        this.selectionBoxHelper.name = '__ascope_internal_selection';
-        this.scene.add(this.selectionBoxHelper);
+        if ((obj as THREE.Bone).isBone) {
+          const worldPosition = new THREE.Vector3();
+          obj.getWorldPosition(worldPosition);
+          this.selectedBoneMarker = new THREE.Mesh(
+            new THREE.SphereGeometry(0.035, 12, 8),
+            new THREE.MeshBasicMaterial({
+              color: 0x22d3ee,
+              depthTest: !this.isSkeletonXray,
+              depthWrite: false,
+              transparent: true,
+              opacity: 0.95,
+            })
+          );
+          this.selectedBoneMarker.name = '__ascope_internal_bone_selection';
+          this.selectedBoneMarker.position.copy(worldPosition);
+          this.selectedBoneMarker.renderOrder = 1000;
+          this.scene.add(this.selectedBoneMarker);
+        } else {
+          this.selectionBoxHelper = new THREE.BoxHelper(obj, 0x00f0ff);
+          this.selectionBoxHelper.name = '__ascope_internal_selection';
+          this.scene.add(this.selectionBoxHelper);
+        }
       }
     }
 
@@ -866,7 +895,16 @@ export class SceneManager {
     }
     const obj = this.currentAssetRoot.getObjectByProperty('uuid', this.selectedMeshUuid);
     if (obj) {
-      this.cameraController.focusSelectedObject(obj, 1.6);
+      if ((obj as THREE.Bone).isBone) {
+        const worldPosition = new THREE.Vector3();
+        obj.getWorldPosition(worldPosition);
+        this.cameraController.focusPosition(
+          [worldPosition.x, worldPosition.y, worldPosition.z],
+          0.65
+        );
+      } else {
+        this.cameraController.focusSelectedObject(obj, 1.6);
+      }
     } else {
       console.warn(`[AssetDoctor Focus] Object with UUID ${this.selectedMeshUuid} not found in scene.`);
     }
@@ -952,6 +990,51 @@ export class SceneManager {
     if (this.skeletonHelper) this.skeletonHelper.visible = this.isSkeletonVisible;
   }
 
+  public setSkeletonXray(enabled: boolean) {
+    this.isSkeletonXray = enabled;
+    this.applySkeletonXrayMaterial();
+
+    if (this.selectedBoneMarker) {
+      const material = this.selectedBoneMarker.material as THREE.MeshBasicMaterial;
+      material.depthTest = !enabled;
+      material.needsUpdate = true;
+    }
+  }
+
+  private applySkeletonXrayMaterial() {
+    if (!this.skeletonHelper) return;
+    const material = this.skeletonHelper.material as THREE.LineBasicMaterial;
+    material.depthTest = !this.isSkeletonXray;
+    material.depthWrite = false;
+    material.transparent = true;
+    material.opacity = this.isSkeletonXray ? 0.95 : 0.8;
+    material.needsUpdate = true;
+    this.skeletonHelper.renderOrder = this.isSkeletonXray ? 999 : 0;
+  }
+
+  public resetPreviewPose() {
+    if (!this.currentAssetRoot) return;
+
+    this.isPlayingAnimation = false;
+    const duration = this.activeAnimationAction?.getClip().duration ?? 0;
+    if (this.animationMixer) {
+      this.animationMixer.stopAllAction();
+      this.animationMixer.setTime(0);
+    }
+
+    const posedSkeletons = new Set<THREE.Skeleton>();
+    this.currentAssetRoot.traverse((object) => {
+      if (!(object as THREE.SkinnedMesh).isSkinnedMesh) return;
+      const mesh = object as THREE.SkinnedMesh;
+      if (!mesh.skeleton || posedSkeletons.has(mesh.skeleton)) return;
+      mesh.skeleton.pose();
+      mesh.skeleton.update();
+      posedSkeletons.add(mesh.skeleton);
+    });
+    this.currentAssetRoot.updateMatrixWorld(true);
+    this.callbacks.onAnimationTimeUpdate?.(0, duration);
+  }
+
   public toggleOrigin(visible?: boolean) {
     this.isOriginVisible = visible !== undefined ? visible : !this.isOriginVisible;
     if (this.originHelper) this.originHelper.visible = this.isOriginVisible;
@@ -963,6 +1046,7 @@ export class SceneManager {
       axes: this.isAxesVisible,
       bbox: this.isBboxVisible,
       skeleton: this.isSkeletonVisible,
+      skeletonXray: this.isSkeletonXray,
       origin: this.isOriginVisible,
     };
   }
@@ -1043,6 +1127,13 @@ export class SceneManager {
       this.scene.remove(this.selectionBoxHelper);
       this.selectionBoxHelper.dispose();
       this.selectionBoxHelper = null;
+    }
+
+    if (this.selectedBoneMarker) {
+      this.scene.remove(this.selectedBoneMarker);
+      this.selectedBoneMarker.geometry.dispose();
+      (this.selectedBoneMarker.material as THREE.Material).dispose();
+      this.selectedBoneMarker = null;
     }
 
     this.explodedViewController.reset();

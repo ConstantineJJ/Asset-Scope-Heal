@@ -31,6 +31,7 @@ import { analyzeAnimationDiagnostics } from './analysis/AnimationDiagnostics';
 import { analyzeTransforms } from './analysis/TransformAnalyzer';
 import { analyzePerformance } from './analysis/PerformanceAnalyzer';
 import { analyzeNormalsAndUv } from './analysis/NormalsAndUvAnalyzer';
+import { inspectSkinInfluence } from './analysis/RigInspection';
 import type {
   AnimationClipInfo,
   AssetSummary,
@@ -47,6 +48,8 @@ import type {
   RepairQueueRunState,
   RenderMode,
   SceneNodeInfo,
+  SkinInfluenceSummary,
+  SkinningStats,
   TextureInfo,
   TopologyStats,
 } from './types';
@@ -133,6 +136,9 @@ export function App() {
   // Selection & Tree States
   const [selectedUuid, setSelectedUuid] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<SceneNodeInfo | null>(null);
+  const [skinningStats, setSkinningStats] = useState<SkinningStats | null>(null);
+  const [skinInfluenceSummary, setSkinInfluenceSummary] = useState<SkinInfluenceSummary | null>(null);
+  const [skeletonXray, setSkeletonXray] = useState(false);
 
   // Animation States
   const [animationClips, setAnimationClips] = useState<AnimationClipInfo[]>([]);
@@ -303,6 +309,7 @@ export function App() {
       const mats = analyzeMaterials(root);
       const texs = analyzeTextures(root);
       const skel = analyzeSkeleton(root);
+      setSkinningStats(skel);
       const anims = analyzeAnimations(clips, skel.rootBoneNames);
       const integrity = analyzeIntegrity(root);
       const animationDiagnostics = analyzeAnimationDiagnostics(clips, root);
@@ -504,6 +511,9 @@ export function App() {
     } else {
       setSelectedNode(null);
     }
+
+    const root = currentAssetRootRef.current;
+    setSkinInfluenceSummary(root ? inspectSkinInfluence(root, selectedUuid) : null);
   }, [selectedUuid, treeRoot]);
 
   // File Handlers
@@ -571,6 +581,27 @@ export function App() {
   const handleSetExplodedAmount = (amount: number) => {
     setExplodedAmount(amount);
     sceneManagerRef.current?.setExplodedAmount(amount);
+  };
+
+  const handleSetSkeletonVisible = (visible: boolean) => {
+    setToggles((prev) => ({ ...prev, skeleton: visible }));
+    sceneManagerRef.current?.toggleSkeleton(visible);
+  };
+
+  const handleSetSkeletonXray = (enabled: boolean) => {
+    setSkeletonXray(enabled);
+    sceneManagerRef.current?.setSkeletonXray(enabled);
+  };
+
+  const handleResetPreviewPose = () => {
+    sceneManagerRef.current?.resetPreviewPose();
+    setIsPlayingAnimation(false);
+    setAnimationTime(0);
+  };
+
+  const handleIsolateSelectedSkinnedMesh = () => {
+    if (!selectedNode || selectedNode.type !== 'SkinnedMesh') return;
+    handleIsolateNode(selectedNode.uuid);
   };
 
   // Camera Handlers
@@ -1175,6 +1206,14 @@ export function App() {
           materials={materials}
           textures={textures}
           selectedNode={selectedNode}
+          skinningStats={skinningStats}
+          skinInfluenceSummary={skinInfluenceSummary}
+          skeletonVisible={toggles.skeleton}
+          skeletonXray={skeletonXray}
+          onSetSkeletonVisible={handleSetSkeletonVisible}
+          onSetSkeletonXray={handleSetSkeletonXray}
+          onResetPreviewPose={handleResetPreviewPose}
+          onIsolateSelectedSkinnedMesh={handleIsolateSelectedSkinnedMesh}
           diagnosticProfileId={diagnosticProfileId}
           onSetDiagnosticProfile={setDiagnosticProfileId}
           lightingConfig={lightingConfig}
