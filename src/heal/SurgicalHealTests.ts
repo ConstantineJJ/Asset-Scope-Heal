@@ -9,7 +9,7 @@ import {
   listRepairOperations,
   previewRepairIssue,
 } from './framework/RepairRegistry';
-import type { HealthIssue } from '../types';
+import type { HealthIssue, HealPreview } from '../types';
 import { createAssetDoctorTestPatient } from '../loaders/SampleModels';
 import { measureGeometryNormals } from '../analysis/NormalsMeasure';
 import { measureSkinWeights } from '../analysis/SkinWeightMeasure';
@@ -1622,9 +1622,7 @@ export async function runSurgicalHealIntegrationTests(): Promise<SurgicalHealTes
         throw new Error('integration fixture meshes missing');
       }
 
-      const applyVerified = (
-        preview: ReturnType<SurgicalHealEngine['previewRemoveDegenerateTriangles']>
-      ) => {
+      const applyVerified = (preview: HealPreview) => {
         if (preview.status !== 'READY') throw new Error('preview not READY');
         const applied = engine.applyPending(sample.root, sample.name);
         if (!applied.success || !applied.report) throw new Error('apply failed');
