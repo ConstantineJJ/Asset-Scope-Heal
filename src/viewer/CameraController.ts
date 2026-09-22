@@ -207,11 +207,26 @@ export class CameraController {
 
   public focusPosition(point: [number, number, number], targetDist?: number) {
     const target = new THREE.Vector3(point[0], point[1], point[2]);
-    const currentDir = new THREE.Vector3().subVectors(this.camera.position, this.controls.target).normalize();
-    const dist = targetDist || Math.max(0.5, this.camera.position.distanceTo(this.controls.target) * 0.4);
+    const currentDir = new THREE.Vector3().subVectors(this.camera.position, this.controls.target);
+    if (currentDir.lengthSq() < 1e-8) {
+      currentDir.set(1, 0.7, 1.2);
+    }
+    currentDir.normalize();
+
+    const fallbackDistance = Math.max(
+      0.05,
+      this.camera.position.distanceTo(this.controls.target) * 0.4
+    );
+    const dist = Math.max(0.01, targetDist ?? fallbackDistance);
 
     this.controls.target.copy(target);
     this.camera.position.copy(target).add(currentDir.multiplyScalar(dist));
+
+    // Focus can jump from whole-model framing to a tiny diagnostic region or bone.
+    // Keep clipping planes proportional to that new working distance.
+    this.camera.near = Math.max(0.001, dist / 500);
+    this.camera.far = Math.max(1000, dist * 100);
+    this.camera.updateProjectionMatrix();
     this.camera.updateMatrixWorld(true);
     this.controls.update();
   }
