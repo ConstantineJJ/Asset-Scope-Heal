@@ -791,7 +791,7 @@ export class SurgicalHealEngine {
       trianglesAfter: planned.after.triangleCount,
       affectedTriangles: planned.duplicateCount,
       affectedCount: planned.duplicateCount,
-      metric: 'triangles',
+      metric: 'duplicate-triangles',
       metricBefore: planned.before.duplicateTriangles,
       metricAfter: planned.after.duplicateTriangles,
       verticesBefore: planned.before.vertexCount,
