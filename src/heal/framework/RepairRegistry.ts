@@ -99,12 +99,52 @@ const normalizeSkinWeights: RepairOperationDefinition = {
   },
 };
 
+const removeExactDuplicateTriangles: RepairOperationDefinition = {
+  kind: 'remove-exact-duplicate-triangles',
+  issueIds: ['topo-exact-duplicate-triangles'],
+  risk: 'CONDITIONAL',
+  labelKey: 'repair.operations.removeExactDuplicateTriangles.label',
+  descriptionKey: 'repair.operations.removeExactDuplicateTriangles.description',
+  capabilities: {
+    preview: true,
+    apply: true,
+    undo: true,
+    verify: true,
+    exportPatch: 'index-only',
+  },
+  preview: (engine, root, issue) => {
+    if (!issue.meshUuid) return null;
+    return engine.previewRemoveExactDuplicateTriangles(root, issue.meshUuid);
+  },
+};
+
+const consolidateDuplicateSkinInfluences: RepairOperationDefinition = {
+  kind: 'consolidate-duplicate-skin-influences',
+  issueIds: ['skin-redundant-influences'],
+  risk: 'CONDITIONAL',
+  labelKey: 'repair.operations.consolidateDuplicateSkinInfluences.label',
+  descriptionKey: 'repair.operations.consolidateDuplicateSkinInfluences.description',
+  capabilities: {
+    preview: true,
+    apply: true,
+    undo: true,
+    verify: true,
+    exportPatch: 'geometry',
+  },
+  preview: (engine, root, issue) => {
+    if (!issue.meshUuid) return null;
+    return engine.previewConsolidateDuplicateSkinInfluences(root, issue.meshUuid);
+  },
+};
+
 const OPERATIONS: readonly RepairOperationDefinition[] = [
   removeDegenerateTriangles,
   removeUnreferencedVertices,
   recalculateNormals,
   mergeExactDuplicateVertices,
   normalizeSkinWeights,
+  removeExactDuplicateTriangles,
+  consolidateDuplicateSkinInfluences,
 ];
 
 const BY_KIND = new Map<HealOperationKind, RepairOperationDefinition>(
