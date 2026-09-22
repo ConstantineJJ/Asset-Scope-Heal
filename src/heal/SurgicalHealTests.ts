@@ -1439,7 +1439,8 @@ function queueReport(candidate: RepairQueueCandidate, status: 'VERIFIED' | 'PART
 function installFileReaderPolyfillForTests(): () => void {
   if (typeof globalThis.FileReader !== 'undefined') return () => {};
 
-  const previous = (globalThis as typeof globalThis & { FileReader?: unknown }).FileReader;
+  const globalWithFileReader = globalThis as any;
+  const previous = globalWithFileReader.FileReader;
 
   class TestFileReader {
     result: string | ArrayBuffer | null = null;
@@ -1470,13 +1471,13 @@ function installFileReaderPolyfillForTests(): () => void {
     }
   }
 
-  (globalThis as typeof globalThis & { FileReader?: unknown }).FileReader = TestFileReader;
+  globalWithFileReader.FileReader = TestFileReader;
 
   return () => {
     if (previous === undefined) {
-      delete (globalThis as typeof globalThis & { FileReader?: unknown }).FileReader;
+      delete globalWithFileReader.FileReader;
     } else {
-      (globalThis as typeof globalThis & { FileReader?: unknown }).FileReader = previous;
+      globalWithFileReader.FileReader = previous;
     }
   };
 }
