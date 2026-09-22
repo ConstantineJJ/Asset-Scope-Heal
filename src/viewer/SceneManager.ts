@@ -246,6 +246,16 @@ export class SceneManager {
     if (!this.currentAssetRoot) return;
 
     const rect = this.renderer.domElement.getBoundingClientRect();
+
+    // SkeletonHelper is a viewport helper outside the asset hierarchy, so Three.js
+    // mesh raycasting cannot select bones directly. Pick the rendered bone segments
+    // in screen space before falling back to mesh raycasting.
+    const boneHit = this.pickBoneAtPointer(e, rect);
+    if (boneHit) {
+      this.selectObject(boneHit.uuid);
+      return;
+    }
+
     this.mouseVector.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     this.mouseVector.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
@@ -261,6 +271,85 @@ export class SceneManager {
     } else {
       this.selectObject(null);
     }
+  }
+
+  private projectWorldToCanvas(
+    world: THREE.Vector3,
+    rect: DOMRect
+  ): { point: THREE.Vector2; depth: number } | null {
+    const projected = world.clone().project(this.camera);
+    if (![projected.x, projected.y, projected.z].every(Number.isFinite)) return null;
+    if (projected.z < -1 || projected.z > 1) return null;
+
+    return {
+      point: new THREE.Vector2(
+        rect.left + (projected.x + 1) * 0.5 * rect.width,
+        rect.top + (1 - projected.y) * 0.5 * rect.height
+      ),
+      depth: projected.z,
+    };
+  }
+
+  private pointToSegmentDistance2D(
+    point: THREE.Vector2,
+    a: THREE.Vector2,
+    b: THREE.Vector2
+  ): number {
+    const ab = b.clone().sub(a);
+    const lengthSq = ab.lengthSq();
+    if (lengthSq <= 1e-9) return point.distanceTo(a);
+
+    const t = THREE.MathUtils.clamp(point.clone().sub(a).dot(ab) / lengthSq, 0, 1);
+    return point.distanceTo(a.clone().add(ab.multiplyScalar(t)));
+  }
+
+  private pickBoneAtPointer(e: PointerEvent, rect: DOMRect): THREE.Bone | null {
+    if (!this.currentAssetRoot || !this.isSkeletonVisible) return null;
+
+    this.currentAssetRoot.updateMatrixWorld(true);
+    const pointer = new THREE.Vector2(e.clientX, e.clientY);
+    const thresholdPx = 11;
+    let bestBone: THREE.Bone | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    let bestDepth = Number.POSITIVE_INFINITY;
+
+    this.currentAssetRoot.traverse((object) => {
+      if (!(object as THREE.Bone).isBone) return;
+      const bone = object as THREE.Bone;
+
+      const childWorld = new THREE.Vector3();
+      bone.getWorldPosition(childWorld);
+      const childScreen = this.projectWorldToCanvas(childWorld, rect);
+      if (!childScreen) return;
+
+      const parentBone =
+        bone.parent && (bone.parent as THREE.Bone).isBone ? (bone.parent as THREE.Bone) : null;
+
+      let distance = pointer.distanceTo(childScreen.point);
+      let depth = childScreen.depth;
+
+      if (parentBone) {
+        const parentWorld = new THREE.Vector3();
+        parentBone.getWorldPosition(parentWorld);
+        const parentScreen = this.projectWorldToCanvas(parentWorld, rect);
+        if (parentScreen) {
+          distance = this.pointToSegmentDistance2D(pointer, parentScreen.point, childScreen.point);
+          depth = Math.min(parentScreen.depth, childScreen.depth);
+        }
+      }
+
+      if (
+        distance <= thresholdPx &&
+        (distance < bestDistance - 0.25 ||
+          (Math.abs(distance - bestDistance) <= 0.25 && depth < bestDepth))
+      ) {
+        bestDistance = distance;
+        bestDepth = depth;
+        bestBone = bone;
+      }
+    });
+
+    return bestBone;
   }
 
   public lastMeshDiagnostics: Array<Record<string, any>> = [];
@@ -579,10 +668,12 @@ export class SceneManager {
       const obj = this.currentAssetRoot.getObjectByProperty('uuid', uuid);
       if (obj) {
         if ((obj as THREE.Bone).isBone) {
+          const bone = obj as THREE.Bone;
           const worldPosition = new THREE.Vector3();
-          obj.getWorldPosition(worldPosition);
+          bone.getWorldPosition(worldPosition);
+          const markerRadius = this.getBoneMarkerRadius(bone);
           this.selectedBoneMarker = new THREE.Mesh(
-            new THREE.SphereGeometry(0.035, 12, 8),
+            new THREE.SphereGeometry(markerRadius, 14, 10),
             new THREE.MeshBasicMaterial({
               color: 0x22d3ee,
               depthTest: !this.isSkeletonXray,
@@ -606,6 +697,57 @@ export class SceneManager {
     if (this.callbacks.onMeshSelected) {
       this.callbacks.onMeshSelected(uuid);
     }
+  }
+
+  private getAssetDiagonal(): number {
+    if (!this.currentAssetRoot) return 0;
+    const bounds = BoundsCalculator.computeAccurateWorldBounds(this.currentAssetRoot);
+    if (!bounds.isValid || bounds.box.isEmpty()) return 0;
+    return bounds.box.getSize(new THREE.Vector3()).length();
+  }
+
+  private getBoneSpan(bone: THREE.Bone): number {
+    const origin = new THREE.Vector3();
+    bone.getWorldPosition(origin);
+    const distances: number[] = [];
+
+    if (bone.parent && (bone.parent as THREE.Bone).isBone) {
+      const parentPosition = new THREE.Vector3();
+      bone.parent.getWorldPosition(parentPosition);
+      distances.push(origin.distanceTo(parentPosition));
+    }
+
+    for (const child of bone.children) {
+      if (!(child as THREE.Bone).isBone) continue;
+      const childPosition = new THREE.Vector3();
+      child.getWorldPosition(childPosition);
+      distances.push(origin.distanceTo(childPosition));
+    }
+
+    return distances.length > 0 ? Math.max(...distances) : 0;
+  }
+
+  private getBoneMarkerRadius(bone: THREE.Bone): number {
+    const assetDiagonal = this.getAssetDiagonal();
+    const span = this.getBoneSpan(bone);
+    return Math.max(assetDiagonal * 0.0045, span * 0.075, 0.003);
+  }
+
+  private getBoneFocusDistance(bone: THREE.Bone): number {
+    const assetDiagonal = this.getAssetDiagonal();
+    const span = this.getBoneSpan(bone);
+    const relativeFloor = assetDiagonal > 0 ? assetDiagonal * 0.10 : 0.15;
+    return Math.max(span * 3.5, relativeFloor, 0.05);
+  }
+
+  private updateSelectedBoneMarker() {
+    if (!this.selectedBoneMarker || !this.selectedMeshUuid || !this.currentAssetRoot) return;
+    const object = this.currentAssetRoot.getObjectByProperty('uuid', this.selectedMeshUuid);
+    if (!object || !(object as THREE.Bone).isBone) return;
+
+    const worldPosition = new THREE.Vector3();
+    object.getWorldPosition(worldPosition);
+    this.selectedBoneMarker.position.copy(worldPosition);
   }
 
   public clearIssueLocalization() {
@@ -663,9 +805,70 @@ export class SceneManager {
     return [base, base + 1, base + 2];
   }
 
-  private buildIssueOverlay(mesh: THREE.Mesh, issue: HealthIssue): THREE.Vector3 | null {
+  private getPrimaryIssueFocus(mesh: THREE.Mesh, issue: HealthIssue): THREE.Vector3 | null {
     const indices = issue.affectedIndices ?? [];
     if (indices.length === 0 || !issue.affectedElement) return null;
+
+    const points: THREE.Vector3[] = [];
+    if (issue.affectedElement === 'triangle') {
+      const triangle = this.getTriangleVertexIndices(mesh, indices[0]);
+      if (triangle) {
+        for (const vertexIndex of triangle) {
+          const point = this.getCurrentVertexWorld(mesh, vertexIndex);
+          if (point) points.push(point);
+        }
+      }
+    } else {
+      const limit = issue.affectedElement === 'edge' ? 2 : 64;
+      for (const vertexIndex of indices.slice(0, limit)) {
+        const point = this.getCurrentVertexWorld(mesh, vertexIndex);
+        if (point) points.push(point);
+      }
+    }
+
+    if (points.length === 0) return null;
+    const center = new THREE.Vector3();
+    points.forEach((point) => center.add(point));
+    return center.multiplyScalar(1 / points.length);
+  }
+
+  private getSemanticIssueTargets(mesh: THREE.Mesh, issue: HealthIssue) {
+    const targets: Array<{
+      affectedElement: NonNullable<HealthIssue['affectedElement']>;
+      affectedIndices: number[];
+    }> = [];
+
+    const seen = new Set<string>();
+    const pushTarget = (
+      element: HealthIssue['affectedElement'],
+      indices: number[] | undefined
+    ) => {
+      if (!element || !indices || indices.length === 0) return;
+      const key = `${element}:${indices.join(',')}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      targets.push({ affectedElement: element, affectedIndices: indices });
+    };
+
+    // Keep the currently selected diagnostic location first so navigation arrows
+    // retain a deterministic primary focus, then render the rest of the sampled
+    // semantic region on the same mesh.
+    pushTarget(issue.affectedElement, issue.affectedIndices);
+    for (const location of issue.locations ?? []) {
+      if (location.meshUuid !== mesh.uuid) continue;
+      pushTarget(location.affectedElement, location.affectedIndices);
+      if (targets.length >= 64) break;
+    }
+
+    return targets;
+  }
+
+  private buildIssueOverlay(
+    mesh: THREE.Mesh,
+    issue: HealthIssue
+  ): { center: THREE.Vector3; radius: number } | null {
+    const targets = this.getSemanticIssueTargets(mesh, issue);
+    if (targets.length === 0) return null;
 
     const overlayGroup = new THREE.Group();
     overlayGroup.name = '__ascope_internal_issue_overlay';
@@ -709,52 +912,76 @@ export class SceneManager {
 
     const currentPoints: THREE.Vector3[] = [];
 
-    if (issue.affectedElement === 'triangle') {
-      const triangle = this.getTriangleVertexIndices(mesh, indices[0]);
-      if (triangle) {
-        for (const vertexIndex of triangle) {
+    for (const target of targets) {
+      const indices = target.affectedIndices;
+
+      if (target.affectedElement === 'triangle') {
+        for (const triangleIndex of indices.slice(0, 64)) {
+          const triangle = this.getTriangleVertexIndices(mesh, triangleIndex);
+          if (!triangle) continue;
+
+          const trianglePoints: THREE.Vector3[] = [];
+          for (const vertexIndex of triangle) {
+            const point = this.getCurrentVertexWorld(mesh, vertexIndex);
+            if (point) {
+              trianglePoints.push(point);
+              currentPoints.push(point);
+            }
+          }
+
+          if (trianglePoints.length === 3) {
+            const [a, b, c] = trianglePoints;
+            const faceGeometry = new THREE.BufferGeometry().setFromPoints([a, b, c]);
+            faceGeometry.setIndex([0, 1, 2]);
+            const face = new THREE.Mesh(faceGeometry, faceMaterial);
+            face.renderOrder = 9998;
+            overlayGroup.add(face);
+
+            const edgeGeometry = new THREE.BufferGeometry().setFromPoints([a, b, b, c, c, a]);
+            const edgeOverlay = new THREE.LineSegments(edgeGeometry, lineMaterial);
+            edgeOverlay.renderOrder = 9999;
+            overlayGroup.add(edgeOverlay);
+          }
+        }
+        continue;
+      }
+
+      if (target.affectedElement === 'edge') {
+        const edgePoints: THREE.Vector3[] = [];
+        for (const vertexIndex of indices.slice(0, 2)) {
           const point = this.getCurrentVertexWorld(mesh, vertexIndex);
-          if (point) currentPoints.push(point);
+          if (point) {
+            edgePoints.push(point);
+            currentPoints.push(point);
+          }
         }
-        if (currentPoints.length === 3) {
-          const [a, b, c] = currentPoints;
-
-          const faceGeometry = new THREE.BufferGeometry().setFromPoints([a, b, c]);
-          faceGeometry.setIndex([0, 1, 2]);
-          const face = new THREE.Mesh(faceGeometry, faceMaterial);
-          face.renderOrder = 9998;
-          overlayGroup.add(face);
-
-          const edgeGeometry = new THREE.BufferGeometry().setFromPoints([a, b, b, c, c, a]);
-          const edgeOverlay = new THREE.LineSegments(edgeGeometry, lineMaterial);
-          edgeOverlay.renderOrder = 9999;
-          overlayGroup.add(edgeOverlay);
+        if (edgePoints.length === 2) {
+          const geometry = new THREE.BufferGeometry().setFromPoints(edgePoints);
+          const overlay = new THREE.LineSegments(geometry, lineMaterial);
+          overlay.renderOrder = 9999;
+          overlayGroup.add(overlay);
         }
+        continue;
       }
-    } else if (issue.affectedElement === 'edge') {
-      for (const vertexIndex of indices.slice(0, 2)) {
-        const point = this.getCurrentVertexWorld(mesh, vertexIndex);
-        if (point) currentPoints.push(point);
-      }
-      if (currentPoints.length === 2) {
-        const geometry = new THREE.BufferGeometry().setFromPoints(currentPoints);
-        const overlay = new THREE.LineSegments(geometry, lineMaterial);
-        overlay.renderOrder = 9999;
-        overlayGroup.add(overlay);
-      }
-    } else if (issue.affectedElement === 'component') {
+
+      const targetPoints: THREE.Vector3[] = [];
       for (const vertexIndex of indices.slice(0, 64)) {
         const point = this.getCurrentVertexWorld(mesh, vertexIndex);
-        if (point) currentPoints.push(point);
+        if (point) {
+          targetPoints.push(point);
+          currentPoints.push(point);
+        }
       }
 
-      if (currentPoints.length > 0) {
-        const pointGeometry = new THREE.BufferGeometry().setFromPoints(currentPoints);
-        const points = new THREE.Points(pointGeometry, pointsMaterial);
-        points.renderOrder = 9999;
-        overlayGroup.add(points);
+      if (targetPoints.length === 0) continue;
 
-        const box = new THREE.Box3().setFromPoints(currentPoints);
+      const pointGeometry = new THREE.BufferGeometry().setFromPoints(targetPoints);
+      const points = new THREE.Points(pointGeometry, pointsMaterial);
+      points.renderOrder = 9999;
+      overlayGroup.add(points);
+
+      if (target.affectedElement === 'component') {
+        const box = new THREE.Box3().setFromPoints(targetPoints);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
         const minThickness = Math.max(size.length() * 0.025, 0.002);
@@ -768,18 +995,6 @@ export class SceneManager {
         zone.position.copy(center);
         zone.renderOrder = 9997;
         overlayGroup.add(zone);
-      }
-    } else {
-      // Vertex findings: render only the affected points, never an enclosing blob.
-      for (const vertexIndex of indices.slice(0, 64)) {
-        const point = this.getCurrentVertexWorld(mesh, vertexIndex);
-        if (point) currentPoints.push(point);
-      }
-      if (currentPoints.length > 0) {
-        const geometry = new THREE.BufferGeometry().setFromPoints(currentPoints);
-        const overlay = new THREE.Points(geometry, pointsMaterial);
-        overlay.renderOrder = 9999;
-        overlayGroup.add(overlay);
       }
     }
 
@@ -807,9 +1022,10 @@ export class SceneManager {
     this.issueOverlay = overlayGroup;
     this.scene.add(overlayGroup);
 
-    const center = new THREE.Vector3();
-    currentPoints.forEach((point) => center.add(point));
-    return currentPoints.length > 0 ? center.multiplyScalar(1 / currentPoints.length) : null;
+    if (currentPoints.length === 0) return null;
+    const sphere = new THREE.Sphere();
+    new THREE.Box3().setFromPoints(currentPoints).getBoundingSphere(sphere);
+    return { center: sphere.center, radius: sphere.radius };
   }
 
   private captureIssueReturnView() {
@@ -860,21 +1076,25 @@ export class SceneManager {
       ? (targetObject as THREE.Mesh)
       : null;
 
-    // Recalculate the location from the currently rendered mesh when possible.
-    // This keeps localization useful for animated SkinnedMesh assets.
-    const liveFocus = targetMesh ? this.buildIssueOverlay(targetMesh, issue) : null;
-    const focusTuple: [number, number, number] | undefined = liveFocus
-      ? [liveFocus.x, liveFocus.y, liveFocus.z]
-      : issue.focusPosition;
+    // Recalculate the selected location from the currently rendered mesh, while
+    // visualizing the whole sampled semantic region for this issue on the mesh.
+    // This preserves precise navigation without reducing a multi-face problem to
+    // a single highlighted triangle.
+    const primaryFocus = targetMesh ? this.getPrimaryIssueFocus(targetMesh, issue) : null;
+    const overlay = targetMesh ? this.buildIssueOverlay(targetMesh, issue) : null;
+    const focusTuple: [number, number, number] | undefined = primaryFocus
+      ? [primaryFocus.x, primaryFocus.y, primaryFocus.z]
+      : overlay
+        ? [overlay.center.x, overlay.center.y, overlay.center.z]
+        : issue.focusPosition;
 
     if (focusTuple) {
       let targetDistance: number | undefined;
 
-      if (targetObject) {
-        const bounds = BoundsCalculator.computeAccurateWorldBounds(targetObject);
-        const size = bounds.box.getSize(new THREE.Vector3());
-        const diag = Math.max(size.length(), 0.05);
-        targetDistance = Math.max(0.25, diag * 2.2);
+      if (targetMesh) {
+        const assetDiagonal = Math.max(this.getAssetDiagonal(), 0.001);
+        const semanticRadius = Math.max(overlay?.radius ?? 0, assetDiagonal * 0.015);
+        targetDistance = Math.max(semanticRadius * 3.5, assetDiagonal * 0.10, 0.03);
       }
 
       this.cameraController.focusPosition(focusTuple, targetDistance);
@@ -896,11 +1116,12 @@ export class SceneManager {
     const obj = this.currentAssetRoot.getObjectByProperty('uuid', this.selectedMeshUuid);
     if (obj) {
       if ((obj as THREE.Bone).isBone) {
+        const bone = obj as THREE.Bone;
         const worldPosition = new THREE.Vector3();
-        obj.getWorldPosition(worldPosition);
+        bone.getWorldPosition(worldPosition);
         this.cameraController.focusPosition(
           [worldPosition.x, worldPosition.y, worldPosition.z],
-          0.65
+          this.getBoneFocusDistance(bone)
         );
       } else {
         this.cameraController.focusSelectedObject(obj, 1.6);
@@ -992,6 +1213,14 @@ export class SceneManager {
 
   public setSkeletonXray(enabled: boolean) {
     this.isSkeletonXray = enabled;
+
+    // X-Ray is a presentation mode of the skeleton overlay. Enabling it must
+    // reveal the skeleton in the same click instead of requiring a second action.
+    if (enabled) {
+      this.isSkeletonVisible = true;
+      if (this.skeletonHelper) this.skeletonHelper.visible = true;
+    }
+
     this.applySkeletonXrayMaterial();
 
     if (this.selectedBoneMarker) {
@@ -1084,6 +1313,7 @@ export class SceneManager {
       if (this.selectionBoxHelper) {
         this.selectionBoxHelper.update();
       }
+      this.updateSelectedBoneMarker();
 
       this.renderer.render(this.scene, this.camera);
 
