@@ -74,6 +74,16 @@ export function analyzeAnimationDiagnostics(
   const staticSamples: string[] = [];
   const scaleSamples: string[] = [];
   const jumpSamples: string[] = [];
+  const invalidTargetClipNames = new Set<string>();
+  const malformedClipNames = new Set<string>();
+  const nonFiniteClipNames = new Set<string>();
+  const duplicateTimestampClipNames = new Set<string>();
+  const staticClipNames = new Set<string>();
+  const scaleClipNames = new Set<string>();
+  const jumpClipNames = new Set<string>();
+
+  const oneClip = (names: Set<string>): string | undefined =>
+    names.size === 1 ? Array.from(names)[0] : undefined;
 
   const bounds = new THREE.Box3().setFromObject(root);
   const diagonal = bounds.isEmpty() ? 0 : bounds.getSize(new THREE.Vector3()).length();
@@ -84,6 +94,7 @@ export function analyzeAnimationDiagnostics(
       const times = track.times;
       const values = track.values;
       const valueSize = track.getValueSize();
+      const clipName = clip.name || 'Unnamed';
 
       const malformed =
         times.length === 0 ||
@@ -95,33 +106,44 @@ export function analyzeAnimationDiagnostics(
 
       if (malformed) {
         malformedTracks++;
-        if (malformedSamples.length < 8) malformedSamples.push(`${clip.name || 'Unnamed'}: ${track.name}`);
+        malformedClipNames.add(clipName);
+        if (malformedSamples.length < 8) malformedSamples.push(`${clipName}: ${track.name}`);
       }
 
       if (!targetExists(root, track.name)) {
         invalidTargetTracks++;
-        if (invalidTargetSamples.length < 8) invalidTargetSamples.push(`${clip.name || 'Unnamed'}: ${track.name}`);
+        invalidTargetClipNames.add(clipName);
+        if (invalidTargetSamples.length < 8) invalidTargetSamples.push(`${clipName}: ${track.name}`);
       }
 
       for (let i = 0; i < times.length; i++) {
-        if (!Number.isFinite(times[i])) nonFiniteTimeKeys++;
+        if (!Number.isFinite(times[i])) {
+          nonFiniteTimeKeys++;
+          nonFiniteClipNames.add(clipName);
+        }
         if (i > 0 && Number.isFinite(times[i]) && Number.isFinite(times[i - 1]) && Math.abs(times[i] - times[i - 1]) <= 1e-9) {
           duplicateTimestamps++;
+          duplicateTimestampClipNames.add(clipName);
         }
       }
 
       for (let i = 0; i < values.length; i++) {
-        if (!Number.isFinite(values[i])) nonFiniteValues++;
+        if (!Number.isFinite(values[i])) {
+          nonFiniteValues++;
+          nonFiniteClipNames.add(clipName);
+        }
       }
 
       if (!malformed && isStaticTrack(track)) {
         staticChannels++;
-        if (staticSamples.length < 8) staticSamples.push(`${clip.name || 'Unnamed'}: ${track.name}`);
+        staticClipNames.add(clipName);
+        if (staticSamples.length < 8) staticSamples.push(`${clipName}: ${track.name}`);
       }
 
       if (track.name.endsWith('.scale')) {
         scaleChannels++;
-        if (scaleSamples.length < 8) scaleSamples.push(`${clip.name || 'Unnamed'}: ${track.name}`);
+        scaleClipNames.add(clipName);
+        if (scaleSamples.length < 8) scaleSamples.push(`${clipName}: ${track.name}`);
       }
 
       if (!malformed && track.name.endsWith('.position') && valueSize >= 3 && times.length >= 2) {
@@ -136,8 +158,9 @@ export function analyzeAnimationDiagnostics(
           const jump = Math.sqrt(dx * dx + dy * dy + dz * dz);
           if (jump > jumpThreshold) {
             extremePositionJumps++;
+            jumpClipNames.add(clipName);
             if (jumpSamples.length < 8) {
-              jumpSamples.push(`${clip.name || 'Unnamed'}: ${track.name} (${jump.toFixed(3)})`);
+              jumpSamples.push(`${clipName}: ${track.name} (${jump.toFixed(3)})`);
             }
           }
         }
@@ -154,6 +177,7 @@ export function analyzeAnimationDiagnostics(
       title: 'Animation tracks target missing nodes',
       description: `${invalidTargetTracks} animation track(s) could not be resolved to a node or bone in the loaded scene.`,
       count: invalidTargetTracks,
+      clipName: oneClip(invalidTargetClipNames),
       evidence: invalidTargetSamples.join('; '),
       whyItMatters: 'A track with no valid target cannot drive the intended transform or property.',
       suggestedAction: 'Restore the missing target or remove/retarget the track in an animation authoring tool.',
@@ -170,6 +194,7 @@ export function analyzeAnimationDiagnostics(
       title: 'Malformed animation tracks detected',
       description: `${malformedTracks} track(s) have empty data or a key/value shape that does not match the track value size.`,
       count: malformedTracks,
+      clipName: oneClip(malformedClipNames),
       evidence: malformedSamples.join('; '),
       whyItMatters: 'Malformed keyframe tracks cannot be evaluated or edited deterministically.',
       suggestedAction: 'Repair or re-export the affected clips before applying animation patches.',
@@ -186,6 +211,7 @@ export function analyzeAnimationDiagnostics(
       title: 'NaN / Infinity found in animation keys',
       description: `${nonFiniteTimeKeys} non-finite timestamp(s) and ${nonFiniteValues} non-finite animation value component(s) were detected.`,
       count: nonFiniteTimeKeys + nonFiniteValues,
+      clipName: oneClip(nonFiniteClipNames),
       evidence: `timestamps=${nonFiniteTimeKeys}, values=${nonFiniteValues}`,
       whyItMatters: 'Non-finite animation data can poison interpolation, playback and export.',
       suggestedAction: 'Correct the source animation data; do not synthesize replacement keys automatically.',
@@ -219,6 +245,7 @@ export function analyzeAnimationDiagnostics(
       title: 'Duplicate animation timestamps detected',
       description: `${duplicateTimestamps} adjacent duplicate timestamp(s) were found in animation tracks.`,
       count: duplicateTimestamps,
+      clipName: oneClip(duplicateTimestampClipNames),
       whyItMatters: 'Duplicate timestamps can create ambiguous interpolation or redundant keys.',
       suggestedAction: 'Inspect the affected clips. A future verified AnimationPatch may remove redundant duplicates safely.',
       repairability: 'MANUAL',
@@ -234,6 +261,7 @@ export function analyzeAnimationDiagnostics(
       title: 'Static animation channels detected',
       description: `${staticChannels} track(s) keep the same value for the entire clip.`,
       count: staticChannels,
+      clipName: oneClip(staticClipNames),
       evidence: staticSamples.join('; '),
       whyItMatters: 'Static channels are often harmless but may be redundant runtime/export data.',
       suggestedAction: 'No action required. Preserve them unless a later verified cleanup patch proves they are redundant.',
@@ -253,6 +281,7 @@ export function analyzeAnimationDiagnostics(
       title: 'Root motion detected',
       description: `${rootMotionClips.length} clip(s) contain significant root translation.`,
       count: rootMotionClips.length,
+      clipName: rootMotionClips.length === 1 ? rootMotionClips[0].name : undefined,
       evidence: rootMotionClips
         .slice(0, 8)
         .map((clip) => `${clip.name}: ${clip.rootMotionTranslation ?? 0}m`)
@@ -272,6 +301,7 @@ export function analyzeAnimationDiagnostics(
       title: 'Scale animation detected',
       description: `${scaleChannels} animation track(s) modify node or bone scale.`,
       count: scaleChannels,
+      clipName: oneClip(scaleClipNames),
       evidence: scaleSamples.join('; '),
       whyItMatters: 'Animated scale may be intentional, but it can complicate retargeting, physics and engine assumptions.',
       suggestedAction: 'Inspect the clips before deciding whether scale animation should be retained.',
@@ -288,6 +318,7 @@ export function analyzeAnimationDiagnostics(
       title: 'Extreme animation position jumps detected',
       description: `${extremePositionJumps} adjacent key transition(s) exceed the conservative jump threshold of ${jumpThreshold.toFixed(3)} scene units.`,
       count: extremePositionJumps,
+      clipName: oneClip(jumpClipNames),
       evidence: jumpSamples.join('; '),
       whyItMatters: 'Very large single-key position changes can indicate a discontinuity, unit mismatch or broken export.',
       suggestedAction: 'Inspect the affected track in context. Do not smooth or clamp it automatically.',

@@ -19,6 +19,12 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
   const total = (selector: (stat: TopologyStats) => number) =>
     topologyResults.reduce((sum, stat) => sum + selector(stat), 0);
 
+  const ratio = (count: number, denominator: number): string | undefined => {
+    if (!Number.isFinite(count) || !Number.isFinite(denominator) || denominator <= 0) return undefined;
+    const percent = (count / denominator) * 100;
+    return `${percent < 0.1 && count > 0 ? percent.toFixed(3) : percent.toFixed(1)}% (${count}/${denominator})`;
+  };
+
   const localize = (
     selector: (stat: TopologyStats) => number,
     localizationKey: keyof NonNullable<TopologyStats['localization']>
@@ -50,6 +56,9 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
     };
   };
 
+  const totalTriangles = total((s) => s.triangleCount);
+  const totalVertices = total((s) => s.vertexCount);
+  const totalComponents = total((s) => s.componentsCount);
   const totalDegenerate = total((s) => s.degenerateTriangles);
   const totalBoundary = total((s) => s.boundaryEdges);
   const totalNonManifold = total((s) => s.nonManifoldEdges);
@@ -68,6 +77,7 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       title: `Degenerate triangles: ${totalDegenerate}`,
       description: `${totalDegenerate} triangle(s) have collinear or zero-length edges with near-zero surface area. Can cause unstable shading, baking or downstream geometry processing.`,
       count: totalDegenerate,
+      ratio: ratio(totalDegenerate, totalTriangles),
       technicalDetails: 'Triangle area is at or below the deterministic area epsilon.',
       ...localize((s) => s.degenerateTriangles, 'degenerate'),
     });
@@ -90,7 +100,9 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       title: `Non-manifold edges: ${totalNonManifold}`,
       description: `${totalNonManifold} edge(s) are shared by more than two faces. This can be problematic for watertight solids, printing, collision hulls or some mesh processing operations.`,
       count: totalNonManifold,
+      repairability: 'MANUAL',
       technicalDetails: 'Edge shared by > 2 triangles.',
+      suggestedAction: 'Manual repair recommended. Inspect the affected edge fan and decide the intended surface connectivity before editing topology.',
       ...localize((s) => s.nonManifoldEdges, 'nonManifold'),
     });
   } else {
@@ -111,7 +123,9 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       title: `Boundary / open edges: ${totalBoundary}`,
       description: `${totalBoundary} edge(s) belong to only one triangle. This is expected for planar decals, hair cards or open shells; inspect only if the model is intended to be watertight.`,
       count: totalBoundary,
+      repairability: 'MANUAL',
       technicalDetails: 'Single-triangle incident edges.',
+      suggestedAction: 'Manual repair recommended only when the asset is intended to be watertight. Open shells, cards, clothing edges and decals may be intentional.',
       ...localize((s) => s.boundaryEdges, 'boundary'),
     });
   } else {
@@ -133,6 +147,7 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       title: `Isolated vertices: ${totalIsolated}`,
       description: `${totalIsolated} vertex position(s) exist in the buffer but are not referenced by any indexed face.`,
       count: totalIsolated,
+      ratio: ratio(totalIsolated, totalVertices),
       technicalDetails: 'Unindexed positions in vertex array.',
       ...localize((s) => s.isolatedVertices, 'isolated'),
     });
@@ -147,6 +162,9 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       title: `Tiny floating components: ${totalTinyComponents}`,
       description: `${totalTinyComponents} disconnected geometry component(s) contain a very small fraction of the mesh. They may be intentional detail or leftover debris.`,
       count: totalTinyComponents,
+      ratio: ratio(totalTinyComponents, totalComponents),
+      repairability: 'MANUAL',
+      suggestedAction: 'Manual repair recommended. Confirm each component is unwanted debris before deleting it; small detached details may be intentional.',
       ...localize((s) => s.tinyComponentsCount, 'tinyComponent'),
     });
   }
@@ -159,6 +177,9 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       title: `Needle triangles: ${totalThinTriangles}`,
       description: `${totalThinTriangles} triangle(s) have an extreme aspect ratio (> 35:1). This can contribute to shading shimmer or fragile baking.`,
       count: totalThinTriangles,
+      ratio: ratio(totalThinTriangles, totalTriangles),
+      repairability: 'MANUAL',
+      suggestedAction: 'Manual repair recommended if these faces cause visible shading, deformation, or baking problems. Preserve intentional thin geometry.',
       ...localize((s) => s.thinTriangles, 'thinTriangle'),
     });
   }
@@ -171,6 +192,7 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       title: `Coincident vertex positions: ${totalDuplicates}`,
       description: `${totalDuplicates} vertices share near-identical spatial cells. glTF and real-time meshes may intentionally split vertices at UV seams and hard normal boundaries.`,
       count: totalDuplicates,
+      ratio: ratio(totalDuplicates, totalVertices),
       repairability: 'CONDITIONAL',
       suggestedAction: 'Preview exact-duplicate merge. Only vertices with identical position and every vertex/morph attribute are eligible; topology-changing merges are blocked.',
       ...localize((s) => s.potentialDuplicatePositions, 'duplicatePosition'),
@@ -186,6 +208,7 @@ export function aggregateTopologyIssues(topologyResults: TopologyStats[]): Healt
       title: `Exact duplicate triangles: ${totalDuplicateTriangles}`,
       description: `${totalDuplicateTriangles} indexed triangle(s) repeat an earlier triangle with the same vertex indices and winding. Reversed-winding backfaces are not counted.`,
       count: totalDuplicateTriangles,
+      ratio: ratio(totalDuplicateTriangles, totalTriangles),
       repairability: 'CONDITIONAL',
       evidence: 'Only same-winding cyclic index duplicates are counted.',
       whyItMatters: 'Exact duplicate faces add redundant rasterization and can create depth or shading ambiguity in some material pipelines.',
@@ -336,6 +359,13 @@ export function evaluateSkinningIssues(
       title: `Unused bones: ${stats.unusedBonesCount}`,
       description: `${stats.unusedBonesCount} bone(s) in skeleton do not bind to any vertex weights (e.g. attachment sockets or locator nodes).`,
       count: stats.unusedBonesCount,
+      ratio:
+        stats.totalBones > 0
+          ? `${((stats.unusedBonesCount / stats.totalBones) * 100).toFixed(1)}% (${stats.unusedBonesCount}/${stats.totalBones})`
+          : undefined,
+      repairability: 'MANUAL',
+      whyItMatters: 'Unused bones can be intentional sockets, locators, control helpers, or genuinely stale rig data. Weight usage alone cannot determine author intent.',
+      suggestedAction: 'Manual repair recommended. Keep sockets/locators that have runtime meaning; remove a bone only after confirming no animation, attachment, constraint, or engine workflow depends on it.',
     });
   }
 
@@ -380,6 +410,7 @@ export function evaluateMaterialIssues(materials: MaterialInfo[]): HealthIssue[]
       title: `Double-sided materials: ${doubleSidedCount}`,
       description: `${doubleSidedCount} material(s) disable backface culling. Disables early depth rejection on some rasterizers.`,
       count: doubleSidedCount,
+      ratio: `${((doubleSidedCount / materials.length) * 100).toFixed(1)}% (${doubleSidedCount}/${materials.length})`,
     });
   }
 
@@ -391,6 +422,7 @@ export function evaluateMaterialIssues(materials: MaterialInfo[]): HealthIssue[]
       title: `Alpha blend materials: ${transparentCount}`,
       description: `${transparentCount} material(s) use alpha blending, which requires depth-sorting of transparent fragments.`,
       count: transparentCount,
+      ratio: `${((transparentCount / materials.length) * 100).toFixed(1)}% (${transparentCount}/${materials.length})`,
     });
   }
 
@@ -425,6 +457,10 @@ export function evaluateTextureIssues(textures: TextureInfo[]): HealthIssue[] {
       title: `Invalid texture dimensions: ${invalidDimensionCount}`,
       description: `${invalidDimensionCount} texture(s) have missing, non-finite, or non-positive dimensions.`,
       count: invalidDimensionCount,
+      ratio:
+        textures.length > 0
+          ? `${((invalidDimensionCount / textures.length) * 100).toFixed(1)}% (${invalidDimensionCount}/${textures.length})`
+          : undefined,
       repairability: 'MANUAL',
     });
   } else if (textures.length > 0) {
@@ -459,6 +495,10 @@ export function evaluateTextureIssues(textures: TextureInfo[]): HealthIssue[] {
       title: `Non-power-of-two textures: ${nonPowerOfTwoCount}`,
       description: `${nonPowerOfTwoCount} texture(s) do not use power-of-two dimensions. Modern WebGL2 supports them, so this is informational rather than a defect.`,
       count: nonPowerOfTwoCount,
+      ratio:
+        textures.length > 0
+          ? `${((nonPowerOfTwoCount / textures.length) * 100).toFixed(1)}% (${nonPowerOfTwoCount}/${textures.length})`
+          : undefined,
       repairability: 'NONE',
     });
   }

@@ -294,5 +294,52 @@ export function runDiagnosticCoreTests(): DiagnosticCoreTestResult[] {
     });
   }
 
+  {
+    const topology: TopologyStats[] = [{
+      meshUuid: 'manual-mesh',
+      meshName: 'ManualMesh',
+      degenerateTriangles: 1,
+      degenerateIndices: [0],
+      boundaryEdges: 3,
+      nonManifoldEdges: 1,
+      isolatedVertices: 0,
+      componentsCount: 4,
+      tinyComponentsCount: 1,
+      thinTriangles: 2,
+      potentialDuplicatePositions: 0,
+      duplicateTriangles: 0,
+      minTriangleArea: 0,
+      maxTriangleArea: 1,
+      avgTriangleArea: 0.25,
+      denseTrianglesCount: 0,
+      triangleCount: 10,
+      vertexCount: 20,
+    }];
+    const findings = aggregateTopologyIssues(topology);
+    const nonManifold = findings.find((issue) => issue.id === 'topo-non-manifold-edges');
+    const boundary = findings.find((issue) => issue.id === 'topo-boundary-edges');
+    const tiny = findings.find((issue) => issue.id === 'topo-tiny-components');
+    const thin = findings.find((issue) => issue.id === 'topo-thin-triangles');
+    const degenerate = findings.find((issue) => issue.id === 'topo-degenerate-triangles');
+
+    results.push({
+      name: 'Diagnostic Explanation Manual Clarity Test',
+      description: 'Intent-dependent topology findings must be explicitly manual-only while deterministic counts expose reliable ratios.',
+      expected: 'manual non-manifold/boundary/tiny/thin + degenerate ratio 10.0% (1/10)',
+      actual: `repairs=${[
+        nonManifold?.repairability,
+        boundary?.repairability,
+        tiny?.repairability,
+        thin?.repairability,
+      ].join(',')}; ratio=${degenerate?.ratio ?? 'missing'}`,
+      passed:
+        nonManifold?.repairability === 'MANUAL' &&
+        boundary?.repairability === 'MANUAL' &&
+        tiny?.repairability === 'MANUAL' &&
+        thin?.repairability === 'MANUAL' &&
+        degenerate?.ratio === '10.0% (1/10)',
+    });
+  }
+
   return results;
 }
