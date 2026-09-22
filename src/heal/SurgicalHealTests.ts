@@ -1360,3 +1360,354 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
   });
   return results;
 }
+
+
+function queueCandidate(key: string, meshName = key): RepairQueueCandidate {
+  const [operation, meshUuid] = key.split(':') as [RepairQueueCandidate['operation'], string];
+  return {
+    key,
+    operation,
+    meshUuid,
+    meshName,
+    issue: {
+      id: 'queue-test',
+      category: 'Topology',
+      severity: 'WARNING',
+      title: key,
+      description: key,
+      meshUuid,
+      meshName,
+    },
+  };
+}
+
+function queuePreview(candidate: RepairQueueCandidate, status: 'READY' | 'BLOCKED' = 'READY') {
+  return {
+    operationId: `preview_${candidate.key}`,
+    operation: candidate.operation,
+    issueId: candidate.issue.id,
+    meshUuid: candidate.meshUuid,
+    meshName: candidate.meshName,
+    status,
+    risk: 'CONDITIONAL' as const,
+    trianglesBefore: 1,
+    trianglesAfter: status === 'READY' ? 0 : 1,
+    affectedTriangles: status === 'READY' ? 1 : 0,
+    affectedCount: status === 'READY' ? 1 : 0,
+    metric: 'triangles' as const,
+    metricBefore: 1,
+    metricAfter: status === 'READY' ? 0 : 1,
+    boundaryEdgesBefore: 0,
+    boundaryEdgesAfter: 0,
+    nonManifoldEdgesBefore: 0,
+    nonManifoldEdgesAfter: 0,
+  };
+}
+
+function queueReport(candidate: RepairQueueCandidate, status: 'VERIFIED' | 'PARTIAL' | 'REGRESSION') {
+  const metrics = {
+    triangleCount: status === 'VERIFIED' ? 0 : 1,
+    vertexCount: 3,
+    degenerateTriangles: status === 'VERIFIED' ? 0 : 1,
+    boundaryEdges: 0,
+    nonManifoldEdges: 0,
+    isolatedVertices: 0,
+    componentsCount: 1,
+    thinTriangles: 0,
+    tinyComponentsCount: 0,
+    potentialDuplicatePositions: 0,
+    duplicateTriangles: 0,
+  };
+  return {
+    version: 2 as const,
+    operationId: `report_${candidate.key}`,
+    operation: candidate.operation,
+    assetName: 'Queue Test',
+    meshUuid: candidate.meshUuid,
+    meshName: candidate.meshName,
+    appliedAt: new Date(0).toISOString(),
+    status,
+    targetStatus: status,
+    pipeline: 'complete' as const,
+    expectedRemoved: 1,
+    before: { ...metrics, triangleCount: 1, degenerateTriangles: 1 },
+    after: metrics,
+    reasons: status === 'VERIFIED' ? [] : ['synthetic'],
+  };
+}
+
+export async function runSurgicalHealIntegrationTests(): Promise<SurgicalHealTestResult[]> {
+  const results: SurgicalHealTestResult[] = [];
+
+  const pushQueueCase = async (
+    name: string,
+    expected: string,
+    makeAdapter: () => Parameters<typeof runSafeRepairQueue>[0],
+    predicate: (outcome: Awaited<ReturnType<typeof runSafeRepairQueue>>) => boolean
+  ) => {
+    const outcome = await runSafeRepairQueue(makeAdapter());
+    results.push({
+      name,
+      description: 'Safe Repair Queue v1 state-machine hardening.',
+      expected,
+      actual: `${outcome.status} / ${outcome.stopCode ?? 'none'} / done=${outcome.completed} / skipped=${outcome.skipped}`,
+      passed: predicate(outcome),
+    });
+  };
+
+  await pushQueueCase(
+    'E3 queue handles a clean asset',
+    'completed / complete',
+    () => ({
+      getCandidates: () => [],
+      preview: () => null,
+      apply: async () => null,
+      shouldStop: () => false,
+      assetStillCurrent: () => true,
+    }),
+    (outcome) => outcome.status === 'completed' && outcome.stopCode === 'complete'
+  );
+
+  await pushQueueCase(
+    'E3 queue completes one safe candidate',
+    'completed / complete / done=1',
+    () => {
+      const candidate = queueCandidate('remove-degenerate-triangles:one');
+      let candidates = [candidate];
+      return {
+        getCandidates: () => candidates,
+        preview: (value) => queuePreview(value),
+        apply: async (value) => {
+          candidates = [];
+          return queueReport(value, 'VERIFIED');
+        },
+        shouldStop: () => false,
+        assetStillCurrent: () => true,
+      };
+    },
+    (outcome) =>
+      outcome.status === 'completed' &&
+      outcome.stopCode === 'complete' &&
+      outcome.completed === 1
+  );
+
+  await pushQueueCase(
+    'E3 queue resolves dependent candidates after each rescan',
+    'completed / done=2',
+    () => {
+      const first = queueCandidate('remove-degenerate-triangles:first');
+      const second = queueCandidate('remove-unreferenced-vertices:first');
+      let candidates = [first];
+      let applied = 0;
+      return {
+        getCandidates: () => candidates,
+        preview: (value) => queuePreview(value),
+        apply: async (value) => {
+          applied++;
+          candidates = applied === 1 ? [second] : [];
+          return queueReport(value, 'VERIFIED');
+        },
+        shouldStop: () => false,
+        assetStillCurrent: () => true,
+      };
+    },
+    (outcome) => outcome.status === 'completed' && outcome.completed === 2
+  );
+
+  await pushQueueCase(
+    'E3 queue skips blocked candidates without applying them',
+    'completedWithSkipped / skipped=1',
+    () => {
+      const blocked = queueCandidate('remove-degenerate-triangles:blocked');
+      return {
+        getCandidates: () => [blocked],
+        preview: (value) => queuePreview(value, 'BLOCKED'),
+        apply: async () => null,
+        shouldStop: () => false,
+        assetStillCurrent: () => true,
+      };
+    },
+    (outcome) =>
+      outcome.status === 'completed' &&
+      outcome.stopCode === 'completeWithSkipped' &&
+      outcome.skipped === 1
+  );
+
+  await pushQueueCase(
+    'E3 queue stops immediately on REGRESSION',
+    'regression / regressionStop',
+    () => {
+      const candidate = queueCandidate('remove-degenerate-triangles:regression');
+      return {
+        getCandidates: () => [candidate],
+        preview: (value) => queuePreview(value),
+        apply: async (value) => queueReport(value, 'REGRESSION'),
+        shouldStop: () => false,
+        assetStillCurrent: () => true,
+      };
+    },
+    (outcome) => outcome.status === 'regression' && outcome.stopCode === 'regressionStop'
+  );
+
+  await pushQueueCase(
+    'E3 queue honors user Stop before another transaction',
+    'stopped / stoppedByUser',
+    () => ({
+      getCandidates: () => [queueCandidate('remove-degenerate-triangles:stop')],
+      preview: (value) => queuePreview(value),
+      apply: async (value) => queueReport(value, 'VERIFIED'),
+      shouldStop: () => true,
+      assetStillCurrent: () => true,
+    }),
+    (outcome) => outcome.status === 'stopped' && outcome.stopCode === 'stoppedByUser'
+  );
+
+  await pushQueueCase(
+    'E3 queue stops when the asset is replaced',
+    'failed / assetChanged',
+    () => ({
+      getCandidates: () => [queueCandidate('remove-degenerate-triangles:asset')],
+      preview: (value) => queuePreview(value),
+      apply: async (value) => queueReport(value, 'VERIFIED'),
+      shouldStop: () => false,
+      assetStillCurrent: () => false,
+    }),
+    (outcome) => outcome.status === 'failed' && outcome.stopCode === 'assetChanged'
+  );
+
+  await pushQueueCase(
+    'E3 queue refuses a VERIFIED candidate that returns after rescan',
+    'partial / targetReturned',
+    () => {
+      const candidate = queueCandidate('remove-degenerate-triangles:repeat');
+      return {
+        getCandidates: () => [candidate],
+        preview: (value) => queuePreview(value),
+        apply: async (value) => queueReport(value, 'VERIFIED'),
+        shouldStop: () => false,
+        assetStillCurrent: () => true,
+      };
+    },
+    (outcome) =>
+      outcome.status === 'partial' &&
+      outcome.stopCode === 'targetReturned' &&
+      outcome.completed === 1
+  );
+
+  // E2 export/reopen integration: repair multiple meshes plus two dependent
+  // operations on the same mesh, export from a pristine source, reopen it, and
+  // perform fresh measurements on the serialized result.
+  {
+    const sample = createAssetDoctorTestPatient();
+    const engine = new SurgicalHealEngine();
+    const service = new RepairedExportService();
+    let reopenedRoot: THREE.Group | null = null;
+    const loader = new GLBLoaderService();
+
+    try {
+      const meshes: THREE.Mesh[] = [];
+      sample.root.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) meshes.push(obj as THREE.Mesh);
+      });
+
+      const topologyMesh = meshes.find(
+        (mesh) => mesh.name === 'Repair_Target_Degenerate_And_Loose_Vertices'
+      );
+      const normalsMesh = meshes.find((mesh) => mesh.name === 'Repair_Target_Zero_Normals');
+      const rigMesh = meshes.find((mesh) => mesh.name === 'Rig_Control_SkinnedMesh') as
+        | THREE.SkinnedMesh
+        | undefined;
+
+      if (!topologyMesh || !normalsMesh || !rigMesh) {
+        throw new Error('integration fixture meshes missing');
+      }
+
+      const applyVerified = (
+        preview: ReturnType<SurgicalHealEngine['previewRemoveDegenerateTriangles']>
+      ) => {
+        if (preview.status !== 'READY') throw new Error('preview not READY');
+        const applied = engine.applyPending(sample.root, sample.name);
+        if (!applied.success || !applied.report) throw new Error('apply failed');
+        engine.completeVerification(applied.report.operationId, true);
+      };
+
+      applyVerified(engine.previewRemoveDegenerateTriangles(sample.root, topologyMesh.uuid));
+      applyVerified(engine.previewRemoveUnreferencedVertices(sample.root, topologyMesh.uuid));
+      applyVerified(engine.previewRecalculateNormals(sample.root, normalsMesh.uuid, 'normals-zero'));
+      applyVerified(engine.previewNormalizeSkinWeights(sample.root, rigMesh.uuid));
+
+      const preflight = engine.validateCurrentVerifiedSession(sample.root);
+      if (!preflight.ok) throw new Error(preflight.reasonKey ?? 'preflight failed');
+
+      const exported = await service.exportAndVerify({
+        source: { kind: 'sample', sampleId: 'test-patient' },
+        currentRoot: sample.root,
+        assetName: sample.name,
+        healReports: preflight.reports,
+      });
+
+      const reopened = await loader.loadFromArrayBuffer(
+        exported.buffer.slice(0),
+        exported.fileName,
+        exported.buffer.byteLength
+      );
+      reopenedRoot = reopened.root;
+
+      const reopenedMeshes: THREE.Mesh[] = [];
+      reopened.root.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) reopenedMeshes.push(obj as THREE.Mesh);
+      });
+
+      const reopenedTopology = reopenedMeshes.find(
+        (mesh) => mesh.name === 'Repair_Target_Degenerate_And_Loose_Vertices'
+      );
+      const reopenedNormals = reopenedMeshes.find(
+        (mesh) => mesh.name === 'Repair_Target_Zero_Normals'
+      );
+      const reopenedRig = reopenedMeshes.find(
+        (mesh) => mesh.name === 'Rig_Control_SkinnedMesh'
+      ) as THREE.SkinnedMesh | undefined;
+
+      const topologyStats = reopenedTopology
+        ? analyzeMeshTopology(meshTopologyData(reopenedTopology))
+        : null;
+      const normalStats = reopenedNormals
+        ? measureGeometryNormals(reopenedNormals.geometry)
+        : null;
+      const skinStats = reopenedRig ? measureSkinWeights(reopenedRig) : null;
+
+      results.push({
+        name: 'E2 multi-repair export, reopen, and fresh rescan verification',
+        description: 'Several repairs on one/multiple meshes must survive verified GLB serialization and fresh post-import measurements.',
+        expected: 'VERIFIED; 4 repairs on 3 meshes; reopened targets remain repaired',
+        actual:
+          `${exported.report.status}; repairs=${exported.report.repairCount}; meshes=${exported.report.repairedMeshCount}; ` +
+          `deg=${topologyStats?.degenerateTriangles ?? -1}; loose=${topologyStats?.isolatedVertices ?? -1}; ` +
+          `normals=${normalStats?.invalidCount ?? -1}; weights=${skinStats?.invalidSumCount ?? -1}`,
+        passed:
+          exported.report.status === 'VERIFIED' &&
+          exported.report.repairCount === 4 &&
+          exported.report.repairedMeshCount === 3 &&
+          topologyStats?.degenerateTriangles === 0 &&
+          topologyStats.isolatedVertices === 0 &&
+          normalStats?.invalidCount === 0 &&
+          skinStats?.supported === true &&
+          skinStats.invalidSumCount === 0,
+      });
+    } catch (error) {
+      results.push({
+        name: 'E2 multi-repair export, reopen, and fresh rescan verification',
+        description: 'Several repairs on one/multiple meshes must survive verified GLB serialization and fresh post-import measurements.',
+        expected: 'VERIFIED; 4 repairs on 3 meshes; reopened targets remain repaired',
+        actual: error instanceof Error ? error.message : String(error),
+        passed: false,
+      });
+    } finally {
+      loader.dispose();
+      if (reopenedRoot) disposeObjectForTest(reopenedRoot);
+      disposeObjectForTest(sample.root);
+    }
+  }
+
+  return results;
+}
