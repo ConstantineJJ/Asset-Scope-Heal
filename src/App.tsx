@@ -175,6 +175,10 @@ export function App() {
     remaining: 0,
   });
   const repairQueueStopRef = useRef(false);
+  // React state updates are asynchronous. This ref is the synchronous mutex that
+  // prevents a fast double-click from starting two queue runners against the
+  // same SurgicalHealEngine preview/apply state.
+  const repairQueueRunningRef = useRef(false);
 
   // Initialize Loader & Worker Services
   useEffect(() => {
@@ -420,6 +424,7 @@ export function App() {
       healEngineRef.current?.clear();
       setActiveRepairReports([]);
       repairQueueStopRef.current = true;
+      repairQueueRunningRef.current = false;
       setRepairQueueState({ status: 'idle', completed: 0, skipped: 0, remaining: 0 });
       healthIssuesRef.current = [];
       setHealReport(null);
@@ -833,7 +838,7 @@ export function App() {
   };
 
   const handleStopRepairQueue = () => {
-    if (repairQueueState.status !== 'running') return;
+    if (!repairQueueRunningRef.current && repairQueueState.status !== 'running') return;
     repairQueueStopRef.current = true;
     setRepairQueueState((previous) => ({
       ...previous,
@@ -844,7 +849,13 @@ export function App() {
   const handleRunSafeRepairQueue = async () => {
     const root = currentAssetRootRef.current;
     const engine = healEngineRef.current;
-    if (!root || !engine || healBusyRef.current || repairQueueState.status === 'running') return;
+    if (
+      !root ||
+      !engine ||
+      healBusyRef.current ||
+      repairQueueRunningRef.current ||
+      repairQueueState.status === 'running'
+    ) return;
 
     const initialCandidates = buildRepairQueueCandidates(healthIssuesRef.current);
     if (initialCandidates.length === 0) {
@@ -860,6 +871,10 @@ export function App() {
 
     if (!window.confirm(t('heal.queue.confirm', { count: initialCandidates.length }))) return;
 
+    // Re-check after the blocking confirmation dialog. Another click can enter
+    // the handler before React has painted the first "running" state.
+    if (repairQueueRunningRef.current || healBusyRef.current) return;
+    repairQueueRunningRef.current = true;
     repairQueueStopRef.current = false;
     let completed = 0;
     let skipped = 0;
@@ -873,9 +888,13 @@ export function App() {
       remaining: initialCandidates.length,
     });
 
-    // Hard guard against unexpected diagnostic cycles. Registered operations
-    // should resolve a candidate in one transaction.
-    for (let pass = 0; pass < 250; pass++) {
+    try {
+      // Hard guard against unexpected diagnostic cycles. Registered operations
+      // should resolve a candidate in one transaction.
+      for (let pass = 0; pass < 250; pass++) {
+        // Let the running/current-operation UI paint before the next potentially
+        // expensive Preview -> Apply -> Rescan transaction.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
       if (repairQueueStopRef.current) {
         setRepairQueueState((previous) => ({
           ...previous,
@@ -1008,13 +1027,16 @@ export function App() {
       });
     }
 
-    setRepairQueueState({
-      status: 'failed',
-      completed,
-      skipped,
-      remaining: buildRepairQueueCandidates(healthIssuesRef.current).length,
-      stopReason: t('heal.queue.guardStop'),
-    });
+      setRepairQueueState({
+        status: 'failed',
+        completed,
+        skipped,
+        remaining: buildRepairQueueCandidates(healthIssuesRef.current).length,
+        stopReason: t('heal.queue.guardStop'),
+      });
+    } finally {
+      repairQueueRunningRef.current = false;
+    }
   };
 
   // Export Repaired Copy v0.1
