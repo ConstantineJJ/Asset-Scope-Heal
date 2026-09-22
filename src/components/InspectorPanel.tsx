@@ -314,6 +314,35 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     focusIssueLocation(issue, next);
   };
 
+  const issueLocationText = (issue: HealthIssue): string => {
+    const current = issueAtCurrentLocation(issue);
+    const subject =
+      current.meshName ??
+      current.boneName ??
+      current.nodeName ??
+      current.clipName ??
+      t('inspector.assetWide');
+
+    const element = current.affectedElement ? ` · ${current.affectedElement}` : '';
+    const indices = current.affectedIndices?.length
+      ? ` [${current.affectedIndices.slice(0, 8).join(', ')}${current.affectedIndices.length > 8 ? ', …' : ''}]`
+      : '';
+    return `${subject}${element}${indices}`;
+  };
+
+  const repairabilityClass = (repairability: HealthIssue['repairability']) => {
+    switch (repairability) {
+      case 'SAFE':
+        return 'text-emerald-300 border-emerald-900/70 bg-emerald-950/20';
+      case 'CONDITIONAL':
+        return 'text-amber-300 border-amber-900/70 bg-amber-950/20';
+      case 'MANUAL':
+        return 'text-orange-300 border-orange-900/70 bg-orange-950/20';
+      default:
+        return 'text-gray-400 border-[#343845] bg-[#15171c]';
+    }
+  };
+
   const repairQueue = buildRepairQueueCandidates(healthIssues);
 
   return (
@@ -726,20 +755,42 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   </div>
                 )}
 
-                {(issue.evidence || issue.suggestedAction || issue.repairability) && (
-                  <div className="ml-6 pt-1.5 border-t border-[#262932] space-y-1 text-[10px]">
-                    {(issue.meshName || issue.affectedIndices?.length) && (
-                      <div>
+                {(issue.evidence ||
+                  issue.suggestedAction ||
+                  issue.repairability ||
+                  issue.count !== undefined ||
+                  issue.ratio ||
+                  issue.meshName ||
+                  issue.nodeName ||
+                  issue.boneName ||
+                  issue.clipName) && (
+                  <div className="ml-6 pt-1.5 border-t border-[#262932] space-y-1.5 text-[10px]">
+                    <div className="grid grid-cols-2 gap-1">
+                      <div className="col-span-2 rounded border border-[#292d35] bg-[#17191e] px-1.5 py-1">
                         <span className="text-gray-500">{t('inspector.location')}:</span>{' '}
-                        <span className="text-cyan-200">
-                          {issue.meshName ?? 'Affected mesh'}
-                          {issue.affectedElement ? ` · ${issue.affectedElement}` : ''}
-                          {issue.affectedIndices?.length
-                            ? ` [${issue.affectedIndices.slice(0, 8).join(', ')}${issue.affectedIndices.length > 8 ? ', …' : ''}]`
-                            : ''}
-                        </span>
+                        <span className="text-cyan-200">{issueLocationText(issue)}</span>
                       </div>
-                    )}
+                      {issue.count !== undefined && (
+                        <div className="rounded border border-[#292d35] bg-[#17191e] px-1.5 py-1">
+                          <span className="text-gray-500 block">{t('inspector.count')}</span>
+                          <span className="text-gray-200 font-mono">{issue.count.toLocaleString()}</span>
+                        </div>
+                      )}
+                      {issue.ratio && (
+                        <div className="rounded border border-[#292d35] bg-[#17191e] px-1.5 py-1">
+                          <span className="text-gray-500 block">{t('inspector.ratio')}</span>
+                          <span className="text-gray-200 font-mono">{issue.ratio}</span>
+                        </div>
+                      )}
+                      <div className="rounded border border-[#292d35] bg-[#17191e] px-1.5 py-1">
+                        <span className="text-gray-500 block">{t('inspector.severity')}</span>
+                        <span className="text-gray-200 font-mono">{issue.severity} · {issue.layer ?? 'Health'}</span>
+                      </div>
+                      <div className={`rounded border px-1.5 py-1 ${repairabilityClass(issue.repairability)}`}>
+                        <span className="opacity-70 block">{t('inspector.repairability')}</span>
+                        <span className="font-mono font-semibold">{issue.repairability ?? 'NONE'}</span>
+                      </div>
+                    </div>
                     {(issue.locations?.length ?? 0) > 1 && (
                       <div className="flex items-center gap-1.5 pt-1">
                         <button
@@ -768,21 +819,27 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     {issue.suggestedAction && (
                       <div><span className="text-gray-500">{t('inspector.next')}:</span> <span className="text-gray-300">{issue.suggestedAction}</span></div>
                     )}
-                    {issue.repairability && issue.repairability !== 'NONE' && (
+                    {issue.repairability === 'MANUAL' && (
+                      <div className="mt-1.5 rounded border border-orange-900/70 bg-orange-950/20 p-1.5">
+                        <div className="font-semibold uppercase tracking-wider text-orange-300 text-[9px]">
+                          {t('inspector.manualRepairRecommended')}
+                        </div>
+                        <div className="text-orange-100/70 mt-0.5 leading-relaxed">
+                          {t('inspector.manualRepairSafety')}
+                        </div>
+                      </div>
+                    )}
+
+                    {getRepairOperationForIssue(issue) && issueAtCurrentLocation(issue).meshUuid && (
                       <div className="flex items-center gap-1.5 mt-1">
-                        <span className="inline-block px-1.5 py-0.5 rounded bg-[#15171c] border border-[#343845] text-amber-300 font-mono uppercase">
-                          {t('inspector.repair')}: {issue.repairability}
-                        </span>
-                        {getRepairOperationForIssue(issue) && issue.meshUuid && (
-                          <button
-                            disabled={healBusy}
-                            onClick={() => onPreviewHeal(issueAtCurrentLocation(issue))}
-                            className="px-1.5 py-0.5 rounded bg-amber-950/40 border border-amber-800 text-amber-300 hover:text-amber-100 hover:bg-amber-950/70 cursor-pointer"
-                            title={t(getRepairOperationForIssue(issue)!.descriptionKey)}
-                          >
-                            {t('heal.previewFix')}
-                          </button>
-                        )}
+                        <button
+                          disabled={healBusy}
+                          onClick={() => onPreviewHeal(issueAtCurrentLocation(issue))}
+                          className="px-1.5 py-0.5 rounded bg-amber-950/40 border border-amber-800 text-amber-300 hover:text-amber-100 hover:bg-amber-950/70 cursor-pointer"
+                          title={t(getRepairOperationForIssue(issue)!.descriptionKey)}
+                        >
+                          {t('heal.previewFix')}
+                        </button>
                       </div>
                     )}
 
@@ -813,9 +870,13 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                                           ? 'heal.metrics.invalidNormals'
                                           : healPreview.metric === 'duplicates'
                                             ? 'heal.metrics.potentialDuplicatePositions'
-                                            : healPreview.metric === 'weights'
-                                              ? 'heal.metrics.invalidSkinWeights'
-                                              : 'heal.metrics.triangleCount'
+                                            : healPreview.metric === 'duplicate-triangles'
+                                              ? 'heal.metrics.duplicateTriangles'
+                                              : healPreview.metric === 'weights'
+                                                ? 'heal.metrics.invalidSkinWeights'
+                                                : healPreview.metric === 'skin-influences'
+                                                  ? 'heal.metrics.redundantSkinInfluenceVertices'
+                                                  : 'heal.metrics.triangleCount'
                                     )}
                                   </span>
                                   <span className="font-mono text-gray-200">
@@ -825,7 +886,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                                 <div className="p-1 rounded bg-[#121418] border border-[#262932]">
                                   <span className="text-gray-500 block">
                                     {t(
-                                      healPreview.metric === 'normals' || healPreview.metric === 'weights'
+                                      healPreview.metric === 'normals' ||
+                                      healPreview.metric === 'weights' ||
+                                      healPreview.metric === 'skin-influences'
                                         ? 'heal.fix'
                                         : 'heal.remove'
                                     )}
