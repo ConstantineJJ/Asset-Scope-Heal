@@ -54,7 +54,9 @@ export function HealReportPanel({
       ? [...healMetricKeys, 'invalidNormals']
       : report.operation === 'normalize-skin-weights'
         ? [...healMetricKeys, 'invalidSkinWeights', 'zeroWeightVertices']
-        : [...healMetricKeys];
+        : report.operation === 'consolidate-duplicate-skin-influences'
+          ? [...healMetricKeys, 'invalidSkinWeights', 'zeroWeightVertices', 'redundantSkinInfluenceVertices']
+          : [...healMetricKeys];
   const regressionDeltas = report.status === 'REGRESSION' && report.after
     ? reportMetricKeys.flatMap((key) => {
         const before = report.before[key];
@@ -223,9 +225,17 @@ export function HealReportPanel({
                 <span className="text-right text-gray-200">
                   {exportReport.targetDuplicatePositionsExpected} → {exportReport.targetDuplicatePositionsActual}
                 </span>
+                <span>{t('export.metrics.duplicateTriangles')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.targetDuplicateTrianglesExpected} → {exportReport.targetDuplicateTrianglesActual}
+                </span>
                 <span>{t('export.metrics.invalidSkinWeights')}</span>
                 <span className="text-right text-gray-200">
                   {exportReport.targetInvalidSkinWeightsExpected} → {exportReport.targetInvalidSkinWeightsActual}
+                </span>
+                <span>{t('export.metrics.redundantSkinInfluences')}</span>
+                <span className="text-right text-gray-200">
+                  {exportReport.targetRedundantSkinInfluencesExpected} → {exportReport.targetRedundantSkinInfluencesActual}
                 </span>
                 <span>{t('export.metrics.meshes')}</span>
                 <span className="text-right text-gray-200">
