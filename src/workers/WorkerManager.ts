@@ -3,19 +3,37 @@ import { analyzeMeshTopology, type RawMeshData } from '../analysis/TopologyAnaly
 import type { TopologyStats } from '../types';
 import { meshTopologyData } from '../analysis/MeshTopologyData';
 
+const WORKER_TASK_TIMEOUT_MS = 15000;
+
 export class WorkerManager {
   private worker: Worker | null = null;
-  private workerFailed: boolean = false;
+  private workerConstructionUnavailable = false;
 
   constructor() {
+    this.createWorker();
+  }
+
+  private createWorker(): boolean {
+    if (this.workerConstructionUnavailable) return false;
     try {
       this.worker = new Worker(new URL('./topology.worker.ts', import.meta.url), {
         type: 'module',
       });
+      return true;
     } catch (e) {
       console.warn('Worker initialization fallback to async thread execution:', e);
-      this.workerFailed = true;
+      this.worker = null;
+      this.workerConstructionUnavailable = true;
+      return false;
     }
+  }
+
+  private restartWorker(): boolean {
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    return this.createWorker();
   }
 
   public async analyzeMeshes(
@@ -44,25 +62,38 @@ export class WorkerManager {
     for (let i = 0; i < total; i++) {
       const meshData = rawMeshes[i];
 
-      if (this.worker && !this.workerFailed) {
+      if (this.worker) {
         try {
-          const stats = await this.sendToWorker(meshData);
-          results.push(stats);
-        } catch (err) {
-          console.warn('Worker task failed, falling back to local thread:', err);
-          const stats = analyzeMeshTopology(meshData);
-          results.push(stats);
+          results.push(await this.sendToWorker(meshData));
+        } catch (firstError) {
+          console.warn('Topology worker task failed; restarting worker once:', firstError);
+
+          if (!this.restartWorker() || !this.worker) {
+            throw new Error(
+              'Topology worker failed and could not be restarted. Analysis stopped to keep the UI responsive.'
+            );
+          }
+
+          try {
+            results.push(await this.sendToWorker(meshData));
+          } catch (retryError) {
+            console.warn('Topology worker retry failed; aborting this analysis pass:', retryError);
+            this.worker.terminate();
+            this.worker = null;
+            throw new Error(
+              'Topology worker did not complete after retry. Analysis stopped instead of falling back to a blocking main-thread pass.'
+            );
+          }
         }
       } else {
-        // Yield to allow UI frame rendering between meshes
-        await new Promise((r) => setTimeout(r, 4));
-        const stats = analyzeMeshTopology(meshData);
-        results.push(stats);
+        // Worker construction can be unavailable on some hosts. In that case
+        // preserve compatibility, but yield before each local mesh so UI state
+        // has a chance to paint. Runtime worker failures never enter this path.
+        await new Promise<void>((resolve) => setTimeout(resolve, 4));
+        results.push(analyzeMeshTopology(meshData));
       }
 
-      if (onProgress) {
-        onProgress(i + 1, total);
-      }
+      onProgress?.(i + 1, total);
     }
 
     return results;
@@ -82,11 +113,9 @@ export class WorkerManager {
       };
       const failed = () => {
         cleanup();
-        this.workerFailed = true;
-        reject(new Error('Topology worker did not complete; retrying locally.'));
+        reject(new Error('Topology worker task did not complete.'));
       };
-      // A crashed worker must not leave post-heal verification pending forever.
-      const timeout = setTimeout(failed, 15000);
+      const timeout = setTimeout(failed, WORKER_TASK_TIMEOUT_MS);
 
       const handler = (e: MessageEvent) => {
         if (e.data && e.data.taskId === taskId) {
@@ -103,9 +132,8 @@ export class WorkerManager {
       worker.addEventListener('error', failed);
       worker.addEventListener('messageerror', failed);
 
-      // Pass transferable buffers where feasible
       try {
-        this.worker.postMessage({ taskId, meshData });
+        worker.postMessage({ taskId, meshData });
       } catch (err) {
         cleanup();
         reject(err);

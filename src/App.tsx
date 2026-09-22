@@ -16,6 +16,7 @@ import { clearHealReport, readHealReport, saveHealReport } from './heal/HealRepo
 import { SurgicalHealEngine } from './heal/SurgicalHealEngine';
 import { previewRepairIssue } from './heal/framework/RepairRegistry';
 import { buildRepairQueueCandidates } from './heal/RepairQueue';
+import { runSafeRepairQueue } from './heal/SafeRepairQueueRunner';
 import {
   RepairedExportService,
   type ExportSourceDescriptor,
@@ -175,6 +176,10 @@ export function App() {
     remaining: 0,
   });
   const repairQueueStopRef = useRef(false);
+  // React state updates are asynchronous. This ref is the synchronous mutex that
+  // prevents a fast double-click from starting two queue runners against the
+  // same SurgicalHealEngine preview/apply state.
+  const repairQueueRunningRef = useRef(false);
 
   // Initialize Loader & Worker Services
   useEffect(() => {
@@ -420,6 +425,7 @@ export function App() {
       healEngineRef.current?.clear();
       setActiveRepairReports([]);
       repairQueueStopRef.current = true;
+      repairQueueRunningRef.current = false;
       setRepairQueueState({ status: 'idle', completed: 0, skipped: 0, remaining: 0 });
       healthIssuesRef.current = [];
       setHealReport(null);
@@ -833,7 +839,7 @@ export function App() {
   };
 
   const handleStopRepairQueue = () => {
-    if (repairQueueState.status !== 'running') return;
+    if (!repairQueueRunningRef.current && repairQueueState.status !== 'running') return;
     repairQueueStopRef.current = true;
     setRepairQueueState((previous) => ({
       ...previous,
@@ -844,7 +850,13 @@ export function App() {
   const handleRunSafeRepairQueue = async () => {
     const root = currentAssetRootRef.current;
     const engine = healEngineRef.current;
-    if (!root || !engine || healBusyRef.current || repairQueueState.status === 'running') return;
+    if (
+      !root ||
+      !engine ||
+      healBusyRef.current ||
+      repairQueueRunningRef.current ||
+      repairQueueState.status === 'running'
+    ) return;
 
     const initialCandidates = buildRepairQueueCandidates(healthIssuesRef.current);
     if (initialCandidates.length === 0) {
@@ -860,161 +872,71 @@ export function App() {
 
     if (!window.confirm(t('heal.queue.confirm', { count: initialCandidates.length }))) return;
 
+    // Re-check after the blocking confirmation dialog. Another click can enter
+    // the handler before React has painted the first "running" state.
+    if (repairQueueRunningRef.current || healBusyRef.current) return;
+    repairQueueRunningRef.current = true;
     repairQueueStopRef.current = false;
-    let completed = 0;
-    let skipped = 0;
-    const blockedKeys = new Set<string>();
-    const completedKeys = new Set<string>();
 
     setRepairQueueState({
       status: 'running',
-      completed,
-      skipped,
+      completed: 0,
+      skipped: 0,
       remaining: initialCandidates.length,
     });
 
-    // Hard guard against unexpected diagnostic cycles. Registered operations
-    // should resolve a candidate in one transaction.
-    for (let pass = 0; pass < 250; pass++) {
-      if (repairQueueStopRef.current) {
-        setRepairQueueState((previous) => ({
-          ...previous,
-          status: 'stopped',
-          stopReason: t('heal.queue.stoppedByUser'),
-        }));
-        return;
+    const stopReasonFor = (code: string | undefined) => {
+      switch (code) {
+        case 'complete': return t('heal.queue.complete');
+        case 'completeWithSkipped': return t('heal.queue.completeWithSkipped');
+        case 'stoppedByUser': return t('heal.queue.stoppedByUser');
+        case 'assetChanged': return t('heal.queue.assetChanged');
+        case 'targetReturned': return t('heal.queue.targetReturned');
+        case 'applyFailed': return t('heal.queue.applyFailed');
+        case 'regressionStop': return t('heal.queue.regressionStop');
+        case 'partialStop': return t('heal.queue.partialStop');
+        case 'guardStop': return t('heal.queue.guardStop');
+        default: return undefined;
       }
+    };
 
-      if (currentAssetRootRef.current !== root) {
-        setRepairQueueState((previous) => ({
-          ...previous,
-          status: 'failed',
-          stopReason: t('heal.queue.assetChanged'),
-        }));
-        return;
-      }
-
-      const candidates = buildRepairQueueCandidates(healthIssuesRef.current)
-        .filter((candidate) => !blockedKeys.has(candidate.key));
-
-      if (candidates.length === 0) {
-        setRepairQueueState({
-          status: 'completed',
-          completed,
-          skipped,
-          remaining: 0,
-          stopReason: t('heal.queue.complete'),
-        });
-        return;
-      }
-
-      let selected: (typeof candidates)[number] | null = null;
-      let selectedPreview: HealPreview | null = null;
-
-      for (const candidate of candidates) {
-        // A VERIFIED operation should remove its queue key after Rescan. If the
-        // same key reappears, do not loop forever.
-        if (completedKeys.has(candidate.key)) {
+    try {
+      const outcome = await runSafeRepairQueue(
+        {
+          getCandidates: () => buildRepairQueueCandidates(healthIssuesRef.current),
+          preview: (candidate) => previewRepairIssue(engine, root, candidate.issue),
+          apply: async (_candidate, preview) => {
+            setHealPreview(preview);
+            return await performHeal(false);
+          },
+          shouldStop: () => repairQueueStopRef.current,
+          assetStillCurrent: () => currentAssetRootRef.current === root,
+          yieldControl: () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+        },
+        (progress) => {
           setRepairQueueState({
-            status: 'partial',
-            completed,
-            skipped,
-            remaining: candidates.length,
-            currentOperation: candidate.operation,
-            currentMeshName: candidate.meshName,
-            stopReason: t('heal.queue.targetReturned'),
+            status: progress.status,
+            completed: progress.completed,
+            skipped: progress.skipped,
+            remaining: progress.remaining,
+            currentOperation: progress.currentOperation,
+            currentMeshName: progress.currentMeshName,
           });
-          return;
         }
+      );
 
-        const preview = previewRepairIssue(engine, root, candidate.issue);
-        if (!preview || preview.status !== 'READY') {
-          blockedKeys.add(candidate.key);
-          skipped++;
-          continue;
-        }
-
-        selected = candidate;
-        selectedPreview = preview;
-        break;
-      }
-
-      if (!selected || !selectedPreview) {
-        setRepairQueueState({
-          status: 'completed',
-          completed,
-          skipped,
-          remaining: 0,
-          stopReason: skipped > 0 ? t('heal.queue.completeWithSkipped') : t('heal.queue.complete'),
-        });
-        return;
-      }
-
-      setHealPreview(selectedPreview);
       setRepairQueueState({
-        status: 'running',
-        completed,
-        skipped,
-        remaining: candidates.length,
-        currentOperation: selected.operation,
-        currentMeshName: selected.meshName,
+        status: outcome.status,
+        completed: outcome.completed,
+        skipped: outcome.skipped,
+        remaining: outcome.remaining,
+        currentOperation: outcome.currentOperation,
+        currentMeshName: outcome.currentMeshName,
+        stopReason: stopReasonFor(outcome.stopCode),
       });
-
-      const report = await performHeal(false);
-      if (!report) {
-        setRepairQueueState({
-          status: 'failed',
-          completed,
-          skipped,
-          remaining: candidates.length,
-          currentOperation: selected.operation,
-          currentMeshName: selected.meshName,
-          stopReason: t('heal.queue.applyFailed'),
-        });
-        return;
-      }
-
-      completedKeys.add(selected.key);
-
-      if (report.status !== 'VERIFIED' || report.pipeline !== 'complete') {
-        const status =
-          report.status === 'REGRESSION'
-            ? 'regression'
-            : report.status === 'PARTIAL'
-              ? 'partial'
-              : 'failed';
-        setRepairQueueState({
-          status,
-          completed,
-          skipped,
-          remaining: buildRepairQueueCandidates(healthIssuesRef.current).length,
-          currentOperation: selected.operation,
-          currentMeshName: selected.meshName,
-          stopReason:
-            report.status === 'REGRESSION'
-              ? t('heal.queue.regressionStop')
-              : t('heal.queue.partialStop'),
-        });
-        return;
-      }
-
-      completed++;
-      const remaining = buildRepairQueueCandidates(healthIssuesRef.current).length;
-      setRepairQueueState({
-        status: 'running',
-        completed,
-        skipped,
-        remaining,
-      });
+    } finally {
+      repairQueueRunningRef.current = false;
     }
-
-    setRepairQueueState({
-      status: 'failed',
-      completed,
-      skipped,
-      remaining: buildRepairQueueCandidates(healthIssuesRef.current).length,
-      stopReason: t('heal.queue.guardStop'),
-    });
   };
 
   // Export Repaired Copy v0.1

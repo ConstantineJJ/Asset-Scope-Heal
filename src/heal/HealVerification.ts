@@ -8,6 +8,32 @@ import type {
 import { measureGeometryNormals } from '../analysis/NormalsMeasure';
 import { measureSkinWeights } from '../analysis/SkinWeightMeasure';
 
+function skinIndexSignature(mesh: THREE.Mesh): string | undefined {
+  if (!(mesh as THREE.SkinnedMesh).isSkinnedMesh) return undefined;
+  const attribute = mesh.geometry.getAttribute('skinIndex');
+  if (!attribute) return undefined;
+
+  // FNV-1a over the logical integer values plus layout. This is audit evidence,
+  // not a cryptographic hash.
+  let hash = 0x811c9dc5;
+  const mix = (value: number) => {
+    hash ^= value >>> 0;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  };
+
+  mix(attribute.itemSize);
+  mix(attribute.count);
+  mix(attribute.normalized ? 1 : 0);
+  for (let vertex = 0; vertex < attribute.count; vertex++) {
+    for (let component = 0; component < attribute.itemSize; component++) {
+      const value = attribute.getComponent(vertex, component);
+      if (!Number.isFinite(value) || !Number.isInteger(value)) return undefined;
+      mix(value);
+    }
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
 export const healMetricKeys = [
   'triangleCount', 'vertexCount', 'degenerateTriangles', 'boundaryEdges',
   'nonManifoldEdges', 'isolatedVertices', 'componentsCount', 'thinTriangles',
@@ -38,6 +64,7 @@ export function healMetrics(
       result.invalidSkinWeights = skin.invalidSumCount;
       result.zeroWeightVertices = skin.zeroWeightCount;
       result.redundantSkinInfluenceVertices = skin.redundantInfluenceVertexCount;
+      result.skinIndexSignature = skinIndexSignature(mesh);
     }
   }
 
@@ -85,6 +112,13 @@ function verifyDegenerateRemoval(
   }
 
   if (measured.degenerateTriangles > before.degenerateTriangles) reasons.push('degenerateTriangles');
+  if (measured.invalidNormals !== before.invalidNormals) reasons.push('invalidNormals');
+  if (measured.invalidSkinWeights !== before.invalidSkinWeights) reasons.push('invalidSkinWeights');
+  if (measured.zeroWeightVertices !== before.zeroWeightVertices) reasons.push('zeroWeightVertices');
+  if (
+    measured.redundantSkinInfluenceVertices !== before.redundantSkinInfluenceVertices
+  ) reasons.push('redundantSkinInfluenceVertices');
+  if (measured.skinIndexSignature !== before.skinIndexSignature) reasons.push('skinIndexSignature');
   if (measured.triangleCount === 0) reasons.push('emptyMesh');
   if (reasons.length) return { status: 'REGRESSION', reasons };
 
@@ -128,6 +162,26 @@ function verifyUnreferencedVertexRemoval(
   if (measured.potentialDuplicatePositions > before.potentialDuplicatePositions) {
     reasons.push('potentialDuplicatePositions');
   }
+  if (
+    measured.invalidNormals !== undefined &&
+    before.invalidNormals !== undefined &&
+    measured.invalidNormals > before.invalidNormals
+  ) reasons.push('invalidNormals');
+  if (
+    measured.invalidSkinWeights !== undefined &&
+    before.invalidSkinWeights !== undefined &&
+    measured.invalidSkinWeights > before.invalidSkinWeights
+  ) reasons.push('invalidSkinWeights');
+  if (
+    measured.zeroWeightVertices !== undefined &&
+    before.zeroWeightVertices !== undefined &&
+    measured.zeroWeightVertices > before.zeroWeightVertices
+  ) reasons.push('zeroWeightVertices');
+  if (
+    measured.redundantSkinInfluenceVertices !== undefined &&
+    before.redundantSkinInfluenceVertices !== undefined &&
+    measured.redundantSkinInfluenceVertices > before.redundantSkinInfluenceVertices
+  ) reasons.push('redundantSkinInfluenceVertices');
 
   if (measured.triangleCount === 0) reasons.push('emptyMesh');
   if (reasons.length) return { status: 'REGRESSION', reasons };
@@ -175,6 +229,12 @@ function verifyNormalRecalculation(
   if ((measured.normalCount ?? 0) !== measured.vertexCount) {
     reasons.push('normalCount');
   }
+  if (measured.invalidSkinWeights !== before.invalidSkinWeights) reasons.push('invalidSkinWeights');
+  if (measured.zeroWeightVertices !== before.zeroWeightVertices) reasons.push('zeroWeightVertices');
+  if (
+    measured.redundantSkinInfluenceVertices !== before.redundantSkinInfluenceVertices
+  ) reasons.push('redundantSkinInfluenceVertices');
+  if (measured.skinIndexSignature !== before.skinIndexSignature) reasons.push('skinIndexSignature');
 
   if (reasons.length) return { status: 'REGRESSION', reasons };
 
@@ -219,6 +279,27 @@ function verifyExactDuplicateMerge(
     if (measured[key] > before[key]) reasons.push(key);
   }
 
+  if (
+    measured.invalidNormals !== undefined &&
+    before.invalidNormals !== undefined &&
+    measured.invalidNormals > before.invalidNormals
+  ) reasons.push('invalidNormals');
+  if (
+    measured.invalidSkinWeights !== undefined &&
+    before.invalidSkinWeights !== undefined &&
+    measured.invalidSkinWeights > before.invalidSkinWeights
+  ) reasons.push('invalidSkinWeights');
+  if (
+    measured.zeroWeightVertices !== undefined &&
+    before.zeroWeightVertices !== undefined &&
+    measured.zeroWeightVertices > before.zeroWeightVertices
+  ) reasons.push('zeroWeightVertices');
+  if (
+    measured.redundantSkinInfluenceVertices !== undefined &&
+    before.redundantSkinInfluenceVertices !== undefined &&
+    measured.redundantSkinInfluenceVertices > before.redundantSkinInfluenceVertices
+  ) reasons.push('redundantSkinInfluenceVertices');
+
   if (reasons.length) return { status: 'REGRESSION', reasons };
   if (before.potentialDuplicatePositions <= measured.potentialDuplicatePositions) {
     return { status: 'PARTIAL', reasons: ['targetRemaining'] };
@@ -260,6 +341,9 @@ function verifySkinWeightNormalization(
 
   if ((measured.zeroWeightVertices ?? 0) !== (before.zeroWeightVertices ?? 0)) {
     reasons.push('zeroWeightVertices');
+  }
+  if (measured.skinIndexSignature !== before.skinIndexSignature) {
+    reasons.push('skinIndexSignature');
   }
 
   if (
@@ -333,6 +417,11 @@ function verifyDuplicateTriangleRemoval(
   ) {
     reasons.push('invalidSkinWeights');
   }
+  if (measured.zeroWeightVertices !== before.zeroWeightVertices) reasons.push('zeroWeightVertices');
+  if (
+    measured.redundantSkinInfluenceVertices !== before.redundantSkinInfluenceVertices
+  ) reasons.push('redundantSkinInfluenceVertices');
+  if (measured.skinIndexSignature !== before.skinIndexSignature) reasons.push('skinIndexSignature');
 
   const regressionReasons = reasons.filter((reason) => reason !== 'targetRemaining');
   if (regressionReasons.length) return { status: 'REGRESSION', reasons };

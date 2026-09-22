@@ -238,7 +238,9 @@ export class RepairedExportService {
         reasons.push('targetRedundantSkinInfluences');
       }
       if (actualSummary.meshCount !== pristineSummary.meshCount) reasons.push('meshCount');
-      if (actualSummary.materialCount !== pristineSummary.materialCount) reasons.push('materialCount');
+      const pristineMaterialCount = this.materialSemanticCount(fresh.root);
+      const actualMaterialCount = this.materialSemanticCount(reopened.root);
+      if (actualMaterialCount !== pristineMaterialCount) reasons.push('materialCount');
       if (actualSummary.textureCount !== pristineSummary.textureCount) reasons.push('textureCount');
       if (actualSummary.skinnedMeshCount !== pristineSummary.skinnedMeshCount) reasons.push('skinnedMeshCount');
       if (actualSummary.boneCount !== pristineSummary.boneCount) reasons.push('boneCount');
@@ -278,8 +280,8 @@ export class RepairedExportService {
         targetRedundantSkinInfluencesActual,
         meshCountExpected: pristineSummary.meshCount,
         meshCountActual: actualSummary.meshCount,
-        materialCountExpected: pristineSummary.materialCount,
-        materialCountActual: actualSummary.materialCount,
+        materialCountExpected: pristineMaterialCount,
+        materialCountActual: actualMaterialCount,
         textureCountExpected: pristineSummary.textureCount,
         textureCountActual: actualSummary.textureCount,
         skinnedMeshCountExpected: pristineSummary.skinnedMeshCount,
@@ -387,25 +389,71 @@ export class RepairedExportService {
     })));
   }
 
+  private textureSemanticKey(texture: THREE.Texture | null | undefined) {
+    if (!texture) return null;
+    const image = texture.image as { width?: number; height?: number } | undefined;
+    return [
+      texture.name,
+      image?.width ?? null,
+      image?.height ?? null,
+      texture.wrapS,
+      texture.wrapT,
+      texture.magFilter,
+      texture.minFilter,
+      texture.flipY,
+      texture.colorSpace,
+      texture.channel,
+    ];
+  }
+
+  private materialSemanticKey(material: THREE.Material) {
+    const candidate = material as THREE.MeshStandardMaterial;
+    return JSON.stringify([
+      material.name,
+      material.type,
+      material.transparent,
+      material.opacity,
+      material.side,
+      candidate.color?.getHexString?.() ?? null,
+      candidate.metalness ?? null,
+      candidate.roughness ?? null,
+      candidate.emissive?.getHexString?.() ?? null,
+      this.textureSemanticKey(candidate.map),
+      this.textureSemanticKey(candidate.normalMap),
+      this.textureSemanticKey(candidate.roughnessMap),
+      this.textureSemanticKey(candidate.metalnessMap),
+      this.textureSemanticKey(candidate.aoMap),
+      this.textureSemanticKey(candidate.emissiveMap),
+    ]);
+  }
+
   private materialSignature(root: THREE.Object3D) {
-    const values: string[] = [];
-    const seen = new Set<string>();
+    // Sharing/deduplication of equivalent Three.js Material objects is not a
+    // serialized glTF invariant. Verify the semantic material assignment per
+    // mesh instead of comparing runtime object identity/count.
+    const meshAssignments: Array<{ name: string; materials: string[] }> = [];
+    root.traverse((obj) => {
+      if (!(obj as THREE.Mesh).isMesh) return;
+      const mesh = obj as THREE.Mesh;
+      const materialValue = mesh.material;
+      const mats: THREE.Material[] = Array.isArray(materialValue) ? materialValue : [materialValue];
+      meshAssignments.push({
+        name: mesh.name,
+        materials: mats.filter(Boolean).map((material) => this.materialSemanticKey(material)),
+      });
+    });
+    return JSON.stringify(meshAssignments);
+  }
+
+  private materialSemanticCount(root: THREE.Object3D) {
+    const unique = new Set<string>();
     root.traverse((obj) => {
       if (!(obj as THREE.Mesh).isMesh) return;
       const materialValue = (obj as THREE.Mesh).material;
       const mats: THREE.Material[] = Array.isArray(materialValue) ? materialValue : [materialValue];
-      for (const material of mats) {
-        if (!material || seen.has(material.uuid)) continue;
-        seen.add(material.uuid);
-        values.push(JSON.stringify([
-          material.name,
-          material.type,
-          (material as THREE.MeshStandardMaterial).transparent,
-          (material as THREE.MeshStandardMaterial).side,
-        ]));
-      }
+      mats.filter(Boolean).forEach((material) => unique.add(this.materialSemanticKey(material)));
     });
-    return JSON.stringify(values.sort());
+    return unique.size;
   }
 
   private rigSignature(root: THREE.Object3D) {
