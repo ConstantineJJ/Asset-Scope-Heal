@@ -151,7 +151,6 @@ export function planRemoveExactDuplicateTriangles(
   try {
     after = analyzeMeshTopology(meshTopologyData(probe));
   } catch {
-    replacementIndex.dispose?.();
     probeGeometry.dispose();
     return { reasonKey: 'heal.errors.afterUnavailable' };
   }
