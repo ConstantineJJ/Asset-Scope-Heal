@@ -747,7 +747,8 @@ export class SceneManager {
       }
 
       if (parsed.nodeName) {
-        return THREE.PropertyBinding.findNode(this.currentAssetRoot, parsed.nodeName) ?? null;
+        const found = THREE.PropertyBinding.findNode(this.currentAssetRoot, parsed.nodeName);
+        return found && (found as THREE.Object3D).isObject3D ? (found as THREE.Object3D) : null;
       }
     } catch {
       // Root-motion visualization is advisory; unresolved bindings simply fall back to asset root.
