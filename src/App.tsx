@@ -590,6 +590,10 @@ export function App() {
 
   const handleSetSkeletonXray = (enabled: boolean) => {
     setSkeletonXray(enabled);
+    if (enabled) {
+      setToggles((prev) => ({ ...prev, skeleton: true }));
+      sceneManagerRef.current?.toggleSkeleton(true);
+    }
     sceneManagerRef.current?.setSkeletonXray(enabled);
   };
 
