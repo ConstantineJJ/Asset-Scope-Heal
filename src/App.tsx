@@ -22,10 +22,12 @@ import {
   type RepairedExportResult,
 } from './export/RepairedExportService';
 import { analyzeGeometry } from './analysis/GeometryAnalyzer';
+import { analyzeIntegrity } from './analysis/IntegrityAnalyzer';
 import { analyzeMaterials } from './analysis/MaterialAnalyzer';
 import { analyzeTextures } from './analysis/TextureAnalyzer';
 import { analyzeSkeleton } from './analysis/SkeletonAnalyzer';
 import { analyzeAnimations } from './analysis/AnimationAnalyzer';
+import { analyzeAnimationDiagnostics } from './analysis/AnimationDiagnostics';
 import { analyzeTransforms } from './analysis/TransformAnalyzer';
 import { analyzePerformance } from './analysis/PerformanceAnalyzer';
 import { analyzeNormalsAndUv } from './analysis/NormalsAndUvAnalyzer';
@@ -89,6 +91,8 @@ export function App() {
     textures: TextureInfo[];
     skeleton: ReturnType<typeof analyzeSkeleton>;
     animations: AnimationClipInfo[];
+    integrity: HealthIssue[];
+    animationDiagnostics: HealthIssue[];
     transforms: HealthIssue[];
     normalsAndUv: HealthIssue[];
     topology: TopologyStats[];
@@ -252,6 +256,8 @@ export function App() {
         textures: snapshot.textures,
         skeleton: snapshot.skeleton,
         animations: snapshot.animations,
+        integrity: snapshot.integrity,
+        animationDiagnostics: snapshot.animationDiagnostics,
         transforms: snapshot.transforms,
         performance,
         normalsAndUv: snapshot.normalsAndUv,
@@ -298,6 +304,8 @@ export function App() {
       const texs = analyzeTextures(root);
       const skel = analyzeSkeleton(root);
       const anims = analyzeAnimations(clips, skel.rootBoneNames);
+      const integrity = analyzeIntegrity(root);
+      const animationDiagnostics = analyzeAnimationDiagnostics(clips, root);
       const xforms = analyzeTransforms(root);
       const totalTracks = clips.reduce((acc, c) => acc + c.tracks.length, 0);
       const normalsUv = analyzeNormalsAndUv(root);
@@ -308,6 +316,8 @@ export function App() {
         textures: texs,
         skeleton: skel,
         animations: anims,
+        integrity,
+        animationDiagnostics,
         transforms: xforms,
         normalsAndUv: normalsUv,
         topology: [],
