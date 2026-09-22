@@ -492,6 +492,7 @@ export class SceneManager {
   public toggleAnimationPlay(play?: boolean) {
     this.isPlayingAnimation = play !== undefined ? play : !this.isPlayingAnimation;
     if (this.activeAnimationAction) {
+      if (this.isPlayingAnimation) this.activeAnimationAction.play();
       this.activeAnimationAction.paused = !this.isPlayingAnimation;
     }
   }
@@ -1015,11 +1016,11 @@ export class SceneManager {
     if (!this.currentAssetRoot) return;
 
     this.isPlayingAnimation = false;
+    const duration = this.activeAnimationAction?.getClip().duration ?? 0;
     if (this.animationMixer) {
       this.animationMixer.stopAllAction();
       this.animationMixer.setTime(0);
     }
-    this.activeAnimationAction = null;
 
     const posedSkeletons = new Set<THREE.Skeleton>();
     this.currentAssetRoot.traverse((object) => {
@@ -1031,7 +1032,7 @@ export class SceneManager {
       posedSkeletons.add(mesh.skeleton);
     });
     this.currentAssetRoot.updateMatrixWorld(true);
-    this.callbacks.onAnimationTimeUpdate?.(0, 0);
+    this.callbacks.onAnimationTimeUpdate?.(0, duration);
   }
 
   public toggleOrigin(visible?: boolean) {
