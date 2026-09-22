@@ -16,6 +16,8 @@ export function readHealReport(storage?: ReportStorage): HealOperationReport | n
           'recalculate-normals',
           'merge-exact-duplicate-vertices',
           'normalize-skin-weights',
+          'remove-exact-duplicate-triangles',
+          'consolidate-duplicate-skin-influences',
         ].includes(report.operation) ||
         !['operationId', 'assetName', 'meshUuid', 'meshName', 'appliedAt'].every(key => typeof report[key] === 'string') ||
         !status(report.status) || !status(report.targetStatus) ||
