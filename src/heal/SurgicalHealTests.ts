@@ -221,6 +221,71 @@ function makeSkinWeightFixture(includeZeroWeight = false) {
   return { root, mesh };
 }
 
+function makeDuplicateTriangleFixture() {
+  const root = new THREE.Group();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+    0, 0, 1,
+  ], 3));
+  geometry.setIndex([
+    0, 2, 1,
+    0, 1, 3,
+    1, 2, 3,
+    2, 0, 3,
+    0, 2, 1,
+  ]);
+
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  mesh.name = 'DuplicateTriangleFixture';
+  root.add(mesh);
+  root.updateMatrixWorld(true);
+  return { root, mesh };
+}
+
+function makeDuplicateSkinInfluenceFixture() {
+  const root = new THREE.Group();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ], 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute([
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+  ], 3));
+  geometry.setIndex([0, 1, 2]);
+  geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute([
+    0, 0, 1, 0,
+    0, 1, 1, 0,
+    0, 1, 0, 0,
+  ], 4));
+  geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute([
+    0.25, 0.25, 0.50, 0,
+    0.50, 0.25, 0.25, 0,
+    0.75, 0.25, 0, 0,
+  ], 4));
+
+  const rootBone = new THREE.Bone();
+  rootBone.name = 'InfluenceRoot';
+  const childBone = new THREE.Bone();
+  childBone.name = 'InfluenceChild';
+  childBone.position.y = 1;
+  rootBone.add(childBone);
+
+  const mesh = new THREE.SkinnedMesh(geometry, new THREE.MeshBasicMaterial());
+  mesh.name = 'DuplicateSkinInfluenceFixture';
+  mesh.add(rootBone);
+  mesh.bind(new THREE.Skeleton([rootBone, childBone]));
+  root.add(mesh);
+  root.updateMatrixWorld(true);
+  return { root, mesh };
+}
+
 export function runSurgicalHealTests(): SurgicalHealTestResult[] {
   const results: SurgicalHealTestResult[] = [];
 
@@ -524,6 +589,8 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
       issue('topo-duplicate-positions', 'Topology', 'INFO', 'mesh-e'),
       issue('skin-zero-weight', 'Skinning', 'ERROR', 'manual-only'),
       issue('skin-invalid-sum', 'Skinning', 'WARNING', 'mesh-d'),
+      issue('topo-exact-duplicate-triangles', 'Topology', 'INFO', 'mesh-f'),
+      issue('skin-redundant-influences', 'Skinning', 'INFO', 'mesh-g'),
       issue('normals-zero', 'Normals', 'WARNING', 'mesh-c'),
       issue('topo-isolated-vertices', 'Topology', 'WARNING', 'mesh-b'),
       issue('topo-degenerate-triangles', 'Topology', 'WARNING', 'mesh-a'),
@@ -549,13 +616,15 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
       },
     ]);
 
-    return queue.length === 5 &&
+    return queue.length === 7 &&
       queue.map((candidate) => candidate.operation).join('|') === [
         'remove-degenerate-triangles',
         'remove-unreferenced-vertices',
         'recalculate-normals',
         'normalize-skin-weights',
         'merge-exact-duplicate-vertices',
+        'remove-exact-duplicate-triangles',
+        'consolidate-duplicate-skin-influences',
       ].join('|') &&
       queue.every((candidate) => candidate.meshUuid !== 'manual-only');
   });
@@ -1054,6 +1123,103 @@ export function runSurgicalHealTests(): SurgicalHealTestResult[] {
       }
       materials.forEach((material) => material.dispose());
     }
+  });
+
+  test('Remove Exact Duplicate Triangles removes only guarded same-winding duplicates and Undo restores them', () => {
+    const { root, mesh } = makeDuplicateTriangleFixture();
+    const engine = new SurgicalHealEngine();
+    const before = analyzeMeshTopology(meshTopologyData(mesh));
+    const preview = engine.previewRemoveExactDuplicateTriangles(root, mesh.uuid);
+    const applied = engine.applyPending(root, 'DuplicateTriangleFixture.glb');
+    const after = analyzeMeshTopology(meshTopologyData(mesh));
+    const report = engine.getLastOperation();
+    const undone = engine.undoLast(root);
+    const restored = analyzeMeshTopology(meshTopologyData(mesh));
+
+    return (
+      before.duplicateTriangles === 1 &&
+      preview.status === 'READY' &&
+      preview.affectedTriangles === 1 &&
+      preview.trianglesBefore === 5 &&
+      preview.trianglesAfter === 4 &&
+      applied.success &&
+      after.duplicateTriangles === 0 &&
+      after.triangleCount === 4 &&
+      report?.targetStatus === 'VERIFIED' &&
+      undone.success &&
+      restored.duplicateTriangles === 1 &&
+      restored.triangleCount === 5
+    );
+  });
+
+  test('Duplicate triangle repair is registered as guarded index-only surgery', () => {
+    const { root, mesh } = makeDuplicateTriangleFixture();
+    const engine = new SurgicalHealEngine();
+    const issue: HealthIssue = {
+      id: 'topo-exact-duplicate-triangles',
+      category: 'Topology',
+      severity: 'INFO',
+      title: 'Exact duplicate triangles',
+      description: 'fixture',
+      meshUuid: mesh.uuid,
+      meshName: mesh.name,
+    };
+    const operation = getRepairOperationForIssue(issue);
+    const preview = previewRepairIssue(engine, root, issue);
+    return (
+      operation?.kind === 'remove-exact-duplicate-triangles' &&
+      operation.capabilities.exportPatch === 'index-only' &&
+      preview?.status === 'READY'
+    );
+  });
+
+  test('Consolidate Duplicate Skin Influences preserves total weighting and Undo restores slots', () => {
+    const { root, mesh } = makeDuplicateSkinInfluenceFixture();
+    const engine = new SurgicalHealEngine();
+    const before = measureSkinWeights(mesh);
+    const preview = engine.previewConsolidateDuplicateSkinInfluences(root, mesh.uuid);
+    const applied = engine.applyPending(root, 'DuplicateSkinInfluenceFixture.glb');
+    const after = measureSkinWeights(mesh);
+    const report = engine.getLastOperation();
+    const undone = engine.undoLast(root);
+    const restored = measureSkinWeights(mesh);
+
+    return (
+      before.supported &&
+      before.redundantInfluenceVertexCount === 2 &&
+      before.invalidSumCount === 0 &&
+      preview.status === 'READY' &&
+      preview.affectedCount === 2 &&
+      applied.success &&
+      after.supported &&
+      after.redundantInfluenceVertexCount === 0 &&
+      after.invalidSumCount === 0 &&
+      after.zeroWeightCount === before.zeroWeightCount &&
+      report?.targetStatus === 'VERIFIED' &&
+      undone.success &&
+      restored.redundantInfluenceVertexCount === 2
+    );
+  });
+
+  test('Duplicate skin influence repair is registered as geometry surgery', () => {
+    const { root, mesh } = makeDuplicateSkinInfluenceFixture();
+    const engine = new SurgicalHealEngine();
+    const issue: HealthIssue = {
+      id: 'skin-redundant-influences',
+      category: 'Skinning',
+      severity: 'INFO',
+      title: 'Redundant skin influences',
+      description: 'fixture',
+      meshUuid: mesh.uuid,
+      meshName: mesh.name,
+    };
+    const operation = getRepairOperationForIssue(issue);
+    const preview = previewRepairIssue(engine, root, issue);
+    return (
+      operation?.kind === 'consolidate-duplicate-skin-influences' &&
+      operation.capabilities.exportPatch === 'geometry' &&
+      preview?.status === 'READY'
+    );
   });
 
   fixtureTest('Topology extraction respects interleaved attributes and local scale', ({ root, mesh }, engine) => {
