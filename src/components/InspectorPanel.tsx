@@ -37,6 +37,8 @@ import type {
   ProgressiveAnalysisState,
   RepairQueueRunState,
   SceneNodeInfo,
+  SkinInfluenceSummary,
+  SkinningStats,
   TextureInfo,
 } from '../types';
 import { useI18n } from '../i18n';
@@ -51,6 +53,14 @@ interface InspectorPanelProps {
   materials: MaterialInfo[];
   textures: TextureInfo[];
   selectedNode: SceneNodeInfo | null;
+  skinningStats: SkinningStats | null;
+  skinInfluenceSummary: SkinInfluenceSummary | null;
+  skeletonVisible: boolean;
+  skeletonXray: boolean;
+  onSetSkeletonVisible: (visible: boolean) => void;
+  onSetSkeletonXray: (enabled: boolean) => void;
+  onResetPreviewPose: () => void;
+  onIsolateSelectedSkinnedMesh: () => void;
   diagnosticProfileId: DiagnosticProfileId;
   onSetDiagnosticProfile: (profileId: DiagnosticProfileId) => void;
   lightingConfig: LightingConfig;
@@ -94,6 +104,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   materials,
   textures,
   selectedNode,
+  skinningStats,
+  skinInfluenceSummary,
+  skeletonVisible,
+  skeletonXray,
+  onSetSkeletonVisible,
+  onSetSkeletonXray,
+  onResetPreviewPose,
+  onIsolateSelectedSkinnedMesh,
   lightingConfig,
   onUpdateLighting,
   onFocusIssue,
@@ -142,6 +160,65 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     (total, texture) => total + (texture.uncompressedBytesEstimate || 0),
     0
   );
+
+  const selectedBoneInfo =
+    selectedNode?.type === 'Bone'
+      ? skinningStats?.bones.find((bone) => bone.uuid === selectedNode.uuid) ?? null
+      : null;
+
+  const analysisStillRunning = Object.values(progressiveState).some(
+    (status) => status === 'running' || status === 'pending'
+  );
+  const analysisHasError = Object.values(progressiveState).some((status) => status === 'error');
+
+  const overallModelState = (() => {
+    if (analysisHasError) {
+      return {
+        label: 'ANALYSIS INCOMPLETE',
+        detail: 'One or more analysis stages failed',
+        barClass: 'bg-violet-500',
+        textClass: 'text-violet-300',
+      };
+    }
+    if (analysisStillRunning) {
+      return {
+        label: 'ANALYZING',
+        detail: 'Diagnostics are still being calculated',
+        barClass: 'bg-cyan-500',
+        textClass: 'text-cyan-300',
+      };
+    }
+    if (severityCounts.ERROR > 0) {
+      return {
+        label: 'CRITICAL',
+        detail: `${severityCounts.ERROR} error(s) · ${severityCounts.WARNING} warning(s)`,
+        barClass: 'bg-rose-500',
+        textClass: 'text-rose-300',
+      };
+    }
+    if (severityCounts.WARNING > 0) {
+      return {
+        label: 'ATTENTION',
+        detail: `${severityCounts.WARNING} warning(s) · ${severityCounts.INFO} info`,
+        barClass: 'bg-amber-400',
+        textClass: 'text-amber-300',
+      };
+    }
+    if (severityCounts.UNKNOWN > 0) {
+      return {
+        label: 'UNKNOWN',
+        detail: `${severityCounts.UNKNOWN} result(s) are unknown`,
+        barClass: 'bg-violet-500',
+        textClass: 'text-violet-300',
+      };
+    }
+    return {
+      label: 'HEALTHY',
+      detail: `${severityCounts.OK} checks passed · ${severityCounts.INFO} info`,
+      barClass: 'bg-emerald-500',
+      textClass: 'text-emerald-300',
+    };
+  })();
 
   const formatBytes = (bytes?: number) => {
     if (!bytes || bytes === 0) return '0 B';
@@ -506,6 +583,20 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   }`}
                 />
                 <span className="text-gray-300 truncate">Topology</span>
+              </div>
+            </div>
+
+            <div className="pt-1.5">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#111318] border border-[#292d35]">
+                <div className={`h-full w-full transition-colors duration-300 ${overallModelState.barClass}`} />
+              </div>
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <span className={`text-[9px] font-bold tracking-wider ${overallModelState.textClass}`}>
+                  MODEL STATE: {overallModelState.label}
+                </span>
+                <span className="text-[9px] text-gray-500 font-mono truncate">
+                  {overallModelState.detail}
+                </span>
               </div>
             </div>
           </div>
@@ -1013,9 +1104,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       {activeTab === 'skeleton' && summary && (
         <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
           <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-2">
-            <h4 className="font-semibold text-gray-200 uppercase tracking-wider text-[10px] text-cyan-400">
-              Rigging Summary
-            </h4>
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="font-semibold text-gray-200 uppercase tracking-wider text-[10px] text-cyan-400">
+                Rigging Summary
+              </h4>
+              <span className="text-[9px] font-mono text-gray-500">SAFE PREVIEW TOOLS</span>
+            </div>
             <div className="grid grid-cols-2 gap-2 text-[11px]">
               <div>
                 <span className="text-gray-400 block text-[10px]">Skeletons:</span>
@@ -1034,7 +1128,89 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <span className="font-mono text-gray-300">{summary.clipCount}</span>
               </div>
             </div>
+
+            <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-[#2b2f38]">
+              <button
+                onClick={() => onSetSkeletonVisible(!skeletonVisible)}
+                className={`px-2 py-1 rounded border text-[10px] cursor-pointer ${
+                  skeletonVisible
+                    ? 'border-cyan-700 bg-cyan-950/30 text-cyan-300'
+                    : 'border-[#343944] bg-[#202329] text-gray-300'
+                }`}
+              >
+                Skeleton Overlay {skeletonVisible ? 'ON' : 'OFF'}
+              </button>
+              <button
+                onClick={() => onSetSkeletonXray(!skeletonXray)}
+                className={`px-2 py-1 rounded border text-[10px] cursor-pointer ${
+                  skeletonXray
+                    ? 'border-violet-700 bg-violet-950/30 text-violet-300'
+                    : 'border-[#343944] bg-[#202329] text-gray-300'
+                }`}
+              >
+                X-Ray {skeletonXray ? 'ON' : 'OFF'}
+              </button>
+              <button
+                onClick={onResetPreviewPose}
+                className="px-2 py-1 rounded border border-[#343944] bg-[#202329] text-gray-300 hover:text-white cursor-pointer text-[10px]"
+              >
+                Reset Bind Pose
+              </button>
+              <button
+                disabled={selectedNode?.type !== 'SkinnedMesh'}
+                onClick={onIsolateSelectedSkinnedMesh}
+                className="px-2 py-1 rounded border border-[#343944] bg-[#202329] text-gray-300 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer text-[10px]"
+              >
+                Isolate Selected Skin
+              </button>
+            </div>
           </div>
+
+          {selectedBoneInfo && (
+            <div className="bg-[#1c1e24] border border-amber-900/60 rounded p-2.5 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="font-semibold text-amber-300 uppercase tracking-wider text-[10px]">
+                  Selected Bone
+                </h4>
+                <span className="font-mono text-[9px] text-gray-500">{selectedBoneInfo.name}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[10px]">
+                <div><span className="text-gray-500 block">Parent</span><span className="text-gray-200">{selectedBoneInfo.parentName || '—'}</span></div>
+                <div><span className="text-gray-500 block">Children</span><span className="text-gray-200">{selectedBoneInfo.childrenNames.length}</span></div>
+              </div>
+              {selectedBoneInfo.childrenNames.length > 0 && (
+                <div className="text-[10px] text-gray-400 break-words">
+                  Children: {selectedBoneInfo.childrenNames.join(', ')}
+                </div>
+              )}
+              <div className="space-y-1 text-[9px] font-mono text-gray-400 border-t border-[#2b2f38] pt-2">
+                <div>POS [{selectedBoneInfo.position.map((value) => value.toFixed(4)).join(', ')}]</div>
+                <div>ROT [{selectedBoneInfo.rotation.map((value) => value.toFixed(4)).join(', ')}]</div>
+                <div>SCL [{selectedBoneInfo.scale.map((value) => value.toFixed(4)).join(', ')}]</div>
+              </div>
+            </div>
+          )}
+
+          {skinInfluenceSummary && (
+            <div className="bg-[#1c1e24] border border-[#2d313a] rounded p-2.5 space-y-2">
+              <h4 className="font-semibold text-gray-300 uppercase tracking-wider text-[10px]">
+                Skin Influence Summary
+              </h4>
+              <div className="text-[10px] text-gray-400">
+                {skinInfluenceSummary.targetType}: <span className="text-gray-200">{skinInfluenceSummary.targetName}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                <div><span className="text-gray-500 block">Skinned Meshes</span><span>{skinInfluenceSummary.skinnedMeshCount}</span></div>
+                <div><span className="text-gray-500 block">Vertices</span><span>{skinInfluenceSummary.vertexCount.toLocaleString()}</span></div>
+                <div><span className="text-gray-500 block">Influenced</span><span>{skinInfluenceSummary.influencedVertices.toLocaleString()}</span></div>
+                <div><span className="text-gray-500 block">Max Influences</span><span>{skinInfluenceSummary.maxInfluencesPerVertex}</span></div>
+                <div><span className="text-gray-500 block">Avg Influences</span><span>{skinInfluenceSummary.averageInfluencesPerVertex.toFixed(2)}</span></div>
+                {skinInfluenceSummary.averageWeight !== undefined && (
+                  <div><span className="text-gray-500 block">Avg Bone Weight</span><span>{skinInfluenceSummary.averageWeight.toFixed(3)}</span></div>
+                )}
+              </div>
+            </div>
+          )}
 
           {summary.clips && summary.clips.length > 0 && (
             <div className="space-y-1.5">
@@ -1064,6 +1240,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                         ? `ROOT TRANSLATION: ${clip.rootMotionTranslation}m`
                         : 'NO SIGNIFICANT ROOT MOTION'}
                     </span>
+                    <span className="px-1.5 py-0.5 rounded bg-[#16181d] text-gray-400">
+                      TRACKS: {clip.trackCount}
+                    </span>
+                  </div>
+                  <div className="text-[9px] text-gray-500 font-mono">
+                    Root rotation delta: {clip.rootMotionRotation ?? 0}°
                   </div>
                 </div>
               ))}
