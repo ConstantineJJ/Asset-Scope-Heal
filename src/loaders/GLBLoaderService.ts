@@ -30,7 +30,11 @@ export class GLBLoaderService {
   public async loadFromFile(file: File): Promise<LoadedModelResult> {
     const arrayBuffer = await file.arrayBuffer();
     const result = await this.loadFromArrayBuffer(arrayBuffer, file.name, file.size);
-    return { ...result, sourceBuffer: arrayBuffer.slice(0) };
+
+    // GLTFLoader.parse does not mutate the source ArrayBuffer. Keep the original
+    // buffer as the pristine export source instead of retaining an unnecessary
+    // full-size copy beside it (important for multi-hundred-MB assets).
+    return { ...result, sourceBuffer: arrayBuffer };
   }
 
   public async loadFromArrayBuffer(
