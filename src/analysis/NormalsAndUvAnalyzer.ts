@@ -20,6 +20,9 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
   let nonFiniteUvVertices = 0;
   let zeroAreaUvTriangles = 0;
   let outsideUnitRangeVertices = 0;
+  let evaluatedMeshCount = 0;
+  let evaluatedUvVertices = 0;
+  let evaluatedUvTriangles = 0;
 
   const missingLocations: DiagnosticLocation[] = [];
   const invalidLocations: DiagnosticLocation[] = [];
@@ -38,6 +41,7 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
     const mesh = obj as THREE.Mesh;
     const geom = mesh.geometry;
     if (!geom) return;
+    evaluatedMeshCount++;
 
     const measurement = measureGeometryNormals(geom);
 
@@ -72,6 +76,7 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
     if (!uvAttr) {
       missingUv0Count++;
     } else {
+      evaluatedUvVertices += uvAttr.count;
       const malformed =
         uvAttr.itemSize < 2 ||
         !position ||
@@ -127,6 +132,7 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
         const triangleCount = index
           ? Math.floor(index.count / 3)
           : Math.floor(position.count / 3);
+        evaluatedUvTriangles += triangleCount;
 
         for (let triangle = 0; triangle < triangleCount; triangle++) {
           const base = triangle * 3;
@@ -181,6 +187,10 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
       title: 'Missing vertex normals',
       description: `${missingNormalsCount} mesh(es) lack explicit vertex normal vectors. Shading will depend on runtime-generated or fallback normals.`,
       count: missingNormalsCount,
+      ratio:
+        evaluatedMeshCount > 0
+          ? `${((missingNormalsCount / evaluatedMeshCount) * 100).toFixed(1)}% (${missingNormalsCount}/${evaluatedMeshCount} meshes)`
+          : undefined,
       repairability: 'CONDITIONAL',
       evidence: `Meshes without normal attributes: ${missingNormalsCount}`,
       suggestedAction: 'Preview deterministic normal recalculation for the affected mesh.',
@@ -240,6 +250,10 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
       title: 'Meshes without primary UV0',
       description: `${missingUv0Count} mesh(es) do not have UV0 coordinates. Texture maps that require UV0 cannot be sampled normally.`,
       count: missingUv0Count,
+      ratio:
+        evaluatedMeshCount > 0
+          ? `${((missingUv0Count / evaluatedMeshCount) * 100).toFixed(1)}% (${missingUv0Count}/${evaluatedMeshCount} meshes)`
+          : undefined,
       repairability: 'MANUAL',
       suggestedAction: 'Manual repair recommended only if UV mapping is required for the intended material workflow.',
     });
@@ -294,6 +308,10 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
       title: 'Malformed UV attribute sizes',
       description: `${malformedUvAttributes} mesh(es) have UV0 item size/count that does not match the vertex domain.`,
       count: malformedUvAttributes,
+      ratio:
+        evaluatedMeshCount > 0
+          ? `${((malformedUvAttributes / evaluatedMeshCount) * 100).toFixed(1)}% (${malformedUvAttributes}/${evaluatedMeshCount} meshes)`
+          : undefined,
       evidence: 'UV0 must provide at least two components per vertex and align with POSITION count.',
       whyItMatters: 'Malformed UV arrays cannot be mapped deterministically to mesh vertices.',
       suggestedAction: 'Repair or re-export the UV attribute in a modeling tool.',
@@ -321,6 +339,10 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
       title: 'NaN / Infinity found in UV coordinates',
       description: `${nonFiniteUvVertices} UV vertex/vertices contain non-finite U or V values.`,
       count: nonFiniteUvVertices,
+      ratio:
+        evaluatedUvVertices > 0
+          ? `${((nonFiniteUvVertices / evaluatedUvVertices) * 100).toFixed(3)}% (${nonFiniteUvVertices}/${evaluatedUvVertices} UV vertices)`
+          : undefined,
       whyItMatters: 'Non-finite UVs can produce undefined texture sampling and invalidate UV diagnostics.',
       suggestedAction: 'Correct the UV data explicitly in the source asset.',
       repairability: 'MANUAL',
@@ -347,6 +369,10 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
       title: 'Zero-area UV triangles detected',
       description: `${zeroAreaUvTriangles} triangle(s) collapse to zero or near-zero area in UV0.`,
       count: zeroAreaUvTriangles,
+      ratio:
+        evaluatedUvTriangles > 0
+          ? `${((zeroAreaUvTriangles / evaluatedUvTriangles) * 100).toFixed(2)}% (${zeroAreaUvTriangles}/${evaluatedUvTriangles} UV triangles)`
+          : undefined,
       whyItMatters: 'Collapsed UV faces can create unstable baking, mip behavior or texture-space derivatives.',
       suggestedAction: 'Inspect the affected faces. Manual repair recommended when the collapse is not intentional.',
       repairability: 'MANUAL',
@@ -373,6 +399,10 @@ export function analyzeNormalsAndUvs(root: THREE.Object3D): HealthIssue[] {
       title: 'UV coordinates outside 0–1 detected',
       description: `${outsideUnitRangeVertices} UV vertex/vertices lie outside the 0–1 tile. This is informational; tiled and UDIM-like workflows may use such coordinates intentionally.`,
       count: outsideUnitRangeVertices,
+      ratio:
+        evaluatedUvVertices > 0
+          ? `${((outsideUnitRangeVertices / evaluatedUvVertices) * 100).toFixed(2)}% (${outsideUnitRangeVertices}/${evaluatedUvVertices} UV vertices)`
+          : undefined,
       whyItMatters: 'Out-of-range UVs are not inherently defective, but they affect wrapping and texture addressing.',
       suggestedAction: 'No automatic repair. Confirm that the material workflow expects tiled coordinates.',
       repairability: 'NONE',
