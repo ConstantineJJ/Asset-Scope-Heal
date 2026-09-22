@@ -165,6 +165,20 @@ export interface BoneInfo {
   scale: [number, number, number];
 }
 
+export interface SkinInfluenceSummary {
+  targetUuid: string;
+  targetName: string;
+  targetType: 'Bone' | 'SkinnedMesh';
+  skinnedMeshCount: number;
+  vertexCount: number;
+  influencedVertices: number;
+  zeroWeightVertices: number;
+  averageInfluencesPerVertex: number;
+  maxInfluencesPerVertex: number;
+  averageWeight?: number;
+  maxWeight?: number;
+}
+
 export interface AnimationClipInfo {
   name: string;
   duration: number;
