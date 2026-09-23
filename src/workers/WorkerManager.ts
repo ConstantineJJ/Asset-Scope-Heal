@@ -31,6 +31,12 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
+function attributeVersion(attribute: THREE.BufferAttribute | THREE.InterleavedBufferAttribute): number {
+  return attribute instanceof THREE.InterleavedBufferAttribute
+    ? attribute.data.version
+    : attribute.version;
+}
+
 function arraysEqual(a: number[], b: THREE.Matrix4): boolean {
   const elements = b.elements;
   if (a.length !== elements.length) return false;
@@ -83,7 +89,7 @@ export class WorkerManager {
     if (
       cached.geometry !== geometry ||
       cached.positionArray !== position.array ||
-      cached.positionVersion !== position.version ||
+      cached.positionVersion !== attributeVersion(position) ||
       cached.indexArray !== (index?.array ?? null) ||
       cached.indexVersion !== (index?.version ?? 0) ||
       !arraysEqual(cached.matrixWorld, mesh.matrixWorld)
@@ -100,7 +106,7 @@ export class WorkerManager {
     this.topologyCache.set(mesh, {
       geometry,
       positionArray: position.array,
-      positionVersion: position.version,
+      positionVersion: attributeVersion(position),
       indexArray: index?.array ?? null,
       indexVersion: index?.version ?? 0,
       matrixWorld: Array.from(mesh.matrixWorld.elements),
