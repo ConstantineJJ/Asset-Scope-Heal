@@ -27,7 +27,7 @@ type RuntimeUndo = {
     | { mutation: 'geometry'; previousGeometry: THREE.BufferGeometry };
 };
 
-type RuntimeEngine = SurgicalHealEngine & {
+type RuntimeEngineStorage = {
   pending?: RuntimePending;
   undoStack?: RuntimeUndo[];
 };
@@ -36,7 +36,9 @@ const verificationStarts = new WeakMap<SurgicalHealEngine, { operationId: string
 let installed = false;
 
 export function syncSurgicalHealMemory(engine: SurgicalHealEngine) {
-  const runtime = engine as RuntimeEngine;
+  // TypeScript private fields are ordinary runtime properties here. This
+  // instrumentation only reads their byte footprint; it never mutates repair state.
+  const runtime = engine as unknown as RuntimeEngineStorage;
   const pending = runtime.pending ?? null;
   const undoStack = runtime.undoStack ?? [];
 
@@ -68,16 +70,19 @@ export function installSurgicalHealPerformanceInstrumentation() {
   if (installed) return;
   installed = true;
 
-  const proto = SurgicalHealEngine.prototype as SurgicalHealEngine & Record<string, (...args: any[]) => any>;
+  const proto = SurgicalHealEngine.prototype as unknown as Record<string, (...args: any[]) => any>;
 
   const originalApplyPending = proto.applyPending;
   proto.applyPending = function (...args: any[]) {
     const startedAt = nowMs();
     const result = originalApplyPending.apply(this, args);
     if (result?.success && result.report?.operationId) {
-      verificationStarts.set(this, { operationId: result.report.operationId, startedAt });
+      verificationStarts.set(this as SurgicalHealEngine, {
+        operationId: result.report.operationId,
+        startedAt,
+      });
     }
-    syncSurgicalHealMemory(this);
+    syncSurgicalHealMemory(this as SurgicalHealEngine);
     return result;
   };
 
@@ -85,34 +90,36 @@ export function installSurgicalHealPerformanceInstrumentation() {
   proto.completeVerification = function (...args: any[]) {
     const operationId = args[0] as string;
     const result = originalCompleteVerification.apply(this, args);
-    const pending = verificationStarts.get(this);
+    const engine = this as SurgicalHealEngine;
+    const pending = verificationStarts.get(engine);
     if (pending?.operationId === operationId) {
       performanceCore.record('applyVerification', nowMs() - pending.startedAt);
-      verificationStarts.delete(this);
+      verificationStarts.delete(engine);
     }
-    syncSurgicalHealMemory(this);
+    syncSurgicalHealMemory(engine);
     return result;
   };
 
   const originalUndoLast = proto.undoLast;
   proto.undoLast = function (...args: any[]) {
     const result = originalUndoLast.apply(this, args);
-    syncSurgicalHealMemory(this);
+    syncSurgicalHealMemory(this as SurgicalHealEngine);
     return result;
   };
 
   const originalCancelPreview = proto.cancelPreview;
   proto.cancelPreview = function (...args: any[]) {
     const result = originalCancelPreview.apply(this, args);
-    syncSurgicalHealMemory(this);
+    syncSurgicalHealMemory(this as SurgicalHealEngine);
     return result;
   };
 
   const originalClear = proto.clear;
   proto.clear = function (...args: any[]) {
-    verificationStarts.delete(this);
+    const engine = this as SurgicalHealEngine;
+    verificationStarts.delete(engine);
     const result = originalClear.apply(this, args);
-    syncSurgicalHealMemory(this);
+    syncSurgicalHealMemory(engine);
     return result;
   };
 }
