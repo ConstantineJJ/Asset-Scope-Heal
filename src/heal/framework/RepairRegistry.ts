@@ -2,11 +2,13 @@ import type { HealthIssue, HealOperationKind } from '../../types';
 import type { SurgicalHealEngine } from '../SurgicalHealEngine';
 import type { RepairOperationDefinition } from './RepairOperation';
 import * as THREE from 'three';
+import { nowMs, performanceCore } from '../../performance/PerformanceProfiler';
 import {
-  estimateGeometryBytes,
-  nowMs,
-  performanceCore,
-} from '../../performance/PerformanceProfiler';
+  installSurgicalHealPerformanceInstrumentation,
+  syncSurgicalHealMemory,
+} from '../../performance/SurgicalHealPerformance';
+
+installSurgicalHealPerformanceInstrumentation();
 
 const removeDegenerateTriangles: RepairOperationDefinition = {
   kind: 'remove-degenerate-triangles',
@@ -191,21 +193,6 @@ export function previewRepairIssue(
   const startedAt = nowMs();
   const preview = operation.preview(engine, root, issue);
   performanceCore.record('repairPreview', nowMs() - startedAt);
-
-  if (preview?.status === 'READY' && issue.meshUuid) {
-    const target = root.getObjectByProperty('uuid', issue.meshUuid);
-    if (target && (target as THREE.Mesh).isMesh) {
-      const geometry = (target as THREE.Mesh).geometry;
-      const snapshotBytes = estimateGeometryBytes(geometry);
-      const indexOnly = operation.capabilities.exportPatch === 'index-only';
-      const replacementBytes = indexOnly
-        ? geometry.index?.array.byteLength ?? 0
-        : snapshotBytes;
-      performanceCore.setMemory({ repairPreviewBytes: snapshotBytes + replacementBytes });
-    }
-  } else {
-    performanceCore.setMemory({ repairPreviewBytes: 0 });
-  }
-
+  syncSurgicalHealMemory(engine);
   return preview;
 }
