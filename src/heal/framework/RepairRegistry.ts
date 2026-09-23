@@ -7,8 +7,10 @@ import {
   installSurgicalHealPerformanceInstrumentation,
   syncSurgicalHealMemory,
 } from '../../performance/SurgicalHealPerformance';
+import { installExportPerformanceInstrumentation } from '../../performance/ExportPerformance';
 
 installSurgicalHealPerformanceInstrumentation();
+installExportPerformanceInstrumentation();
 
 const removeDegenerateTriangles: RepairOperationDefinition = {
   kind: 'remove-degenerate-triangles',
