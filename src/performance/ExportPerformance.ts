@@ -8,7 +8,7 @@ export function installExportPerformanceInstrumentation() {
   if (installed) return;
   installed = true;
 
-  const proto = RepairedExportService.prototype as RepairedExportService & Record<string, (...args: any[]) => any>;
+  const proto = RepairedExportService.prototype as unknown as Record<string, (...args: any[]) => any>;
   const original = proto.exportAndVerify;
 
   proto.exportAndVerify = async function (...args: any[]) {
