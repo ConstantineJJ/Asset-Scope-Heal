@@ -71,18 +71,20 @@ export function installSurgicalHealPerformanceInstrumentation() {
   installed = true;
 
   const proto = SurgicalHealEngine.prototype as unknown as Record<string, (...args: any[]) => any>;
+  const asEngine = (value: unknown) => value as SurgicalHealEngine;
 
   const originalApplyPending = proto.applyPending;
   proto.applyPending = function (...args: any[]) {
     const startedAt = nowMs();
     const result = originalApplyPending.apply(this, args);
+    const engine = asEngine(this);
     if (result?.success && result.report?.operationId) {
-      verificationStarts.set(this as SurgicalHealEngine, {
+      verificationStarts.set(engine, {
         operationId: result.report.operationId,
         startedAt,
       });
     }
-    syncSurgicalHealMemory(this as SurgicalHealEngine);
+    syncSurgicalHealMemory(engine);
     return result;
   };
 
@@ -90,7 +92,7 @@ export function installSurgicalHealPerformanceInstrumentation() {
   proto.completeVerification = function (...args: any[]) {
     const operationId = args[0] as string;
     const result = originalCompleteVerification.apply(this, args);
-    const engine = this as SurgicalHealEngine;
+    const engine = asEngine(this);
     const pending = verificationStarts.get(engine);
     if (pending?.operationId === operationId) {
       performanceCore.record('applyVerification', nowMs() - pending.startedAt);
@@ -103,20 +105,20 @@ export function installSurgicalHealPerformanceInstrumentation() {
   const originalUndoLast = proto.undoLast;
   proto.undoLast = function (...args: any[]) {
     const result = originalUndoLast.apply(this, args);
-    syncSurgicalHealMemory(this as SurgicalHealEngine);
+    syncSurgicalHealMemory(asEngine(this));
     return result;
   };
 
   const originalCancelPreview = proto.cancelPreview;
   proto.cancelPreview = function (...args: any[]) {
     const result = originalCancelPreview.apply(this, args);
-    syncSurgicalHealMemory(this as SurgicalHealEngine);
+    syncSurgicalHealMemory(asEngine(this));
     return result;
   };
 
   const originalClear = proto.clear;
   proto.clear = function (...args: any[]) {
-    const engine = this as SurgicalHealEngine;
+    const engine = asEngine(this);
     verificationStarts.delete(engine);
     const result = originalClear.apply(this, args);
     syncSurgicalHealMemory(engine);
