@@ -30,6 +30,10 @@ export function captureGeometry(geometry: THREE.BufferGeometry): GeometrySnapsho
   };
 }
 
+export function geometrySnapshotByteLength(snapshot: GeometrySnapshot): number {
+  return snapshot.entries.reduce((total, entry) => total + entry.bytes.byteLength, 0);
+}
+
 export function geometryMatches(geometry: THREE.BufferGeometry, snapshot: GeometrySnapshot): boolean {
   const current = captureGeometry(geometry);
   return current.layout === snapshot.layout && current.entries.length === snapshot.entries.length &&

@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import {
+  estimateObjectGeometryBytes,
+  nowMs,
+  performanceCore,
+} from '../performance/PerformanceProfiler';
 
 export interface LoadedModelResult {
   fileName: string;
@@ -28,9 +33,20 @@ export class GLBLoaderService {
   }
 
   public async loadFromFile(file: File): Promise<LoadedModelResult> {
+    const startedAt = nowMs();
     const arrayBuffer = await file.arrayBuffer();
     const result = await this.loadFromArrayBuffer(arrayBuffer, file.name, file.size);
-    return { ...result, sourceBuffer: arrayBuffer.slice(0) };
+
+    performanceCore.resetForAsset(
+      arrayBuffer.byteLength,
+      estimateObjectGeometryBytes(result.root)
+    );
+    performanceCore.record('initialLoad', nowMs() - startedAt);
+
+    // GLTFLoader.parse does not mutate the source ArrayBuffer. Keep the original
+    // buffer as the pristine export source instead of retaining an unnecessary
+    // full-size copy beside it (important for multi-hundred-MB assets).
+    return { ...result, sourceBuffer: arrayBuffer };
   }
 
   public async loadFromArrayBuffer(

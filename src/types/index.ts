@@ -94,6 +94,52 @@ export interface ProgressiveAnalysisState {
   topology: AnalysisStageStatus;
 }
 
+export type PerformanceStageId =
+  | 'initialLoad'
+  | 'firstDiagnosticPass'
+  | 'topologyWorker'
+  | 'rescan'
+  | 'repairPreview'
+  | 'applyVerification'
+  | 'export'
+  | 'reopenVerification';
+
+export interface PerformanceTimingSample {
+  lastMs: number;
+  bestMs: number;
+  worstMs: number;
+  averageMs: number;
+  samples: number;
+}
+
+export interface TopologyPerformanceStats {
+  meshCount: number;
+  cacheHits: number;
+  cacheMisses: number;
+  extractionMs: number;
+  workerMs: number;
+  transferredBytes: number;
+}
+
+export interface PerformanceMemoryStats {
+  sourceGlbBytes: number;
+  liveGeometryBytes: number;
+  undoSnapshotsBytes: number;
+  repairPreviewBytes: number;
+  exportBufferBytes: number;
+  pristineExportGeometryBytes: number;
+  reopenedVerificationGeometryBytes: number;
+  jsHeapUsedBytes?: number;
+  jsHeapLimitBytes?: number;
+}
+
+export interface PerformanceCoreProfile {
+  timings: Partial<Record<PerformanceStageId, PerformanceTimingSample>>;
+  topology: TopologyPerformanceStats;
+  memory: PerformanceMemoryStats;
+  cancelledAnalyses: number;
+}
+
 export interface SceneNodeInfo {
   uuid: string;
   name: string;

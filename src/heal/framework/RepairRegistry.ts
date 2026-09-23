@@ -2,6 +2,15 @@ import type { HealthIssue, HealOperationKind } from '../../types';
 import type { SurgicalHealEngine } from '../SurgicalHealEngine';
 import type { RepairOperationDefinition } from './RepairOperation';
 import * as THREE from 'three';
+import { nowMs, performanceCore } from '../../performance/PerformanceProfiler';
+import {
+  installSurgicalHealPerformanceInstrumentation,
+  syncSurgicalHealMemory,
+} from '../../performance/SurgicalHealPerformance';
+import { installExportPerformanceInstrumentation } from '../../performance/ExportPerformance';
+
+installSurgicalHealPerformanceInstrumentation();
+installExportPerformanceInstrumentation();
 
 const removeDegenerateTriangles: RepairOperationDefinition = {
   kind: 'remove-degenerate-triangles',
@@ -182,5 +191,10 @@ export function previewRepairIssue(
 ) {
   const operation = getRepairOperationForIssue(issue);
   if (!operation || !operation.capabilities.preview) return null;
-  return operation.preview(engine, root, issue);
+
+  const startedAt = nowMs();
+  const preview = operation.preview(engine, root, issue);
+  performanceCore.record('repairPreview', nowMs() - startedAt);
+  syncSurgicalHealMemory(engine);
+  return preview;
 }
